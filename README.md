@@ -735,6 +735,6 @@ MIT License - Use como quiser! 🚀
 
 ---
 
-Feito com ❤️ para times de vendas
+Feito com ❤️ por Thales Laray | Escola de Automação
 
 </div>
