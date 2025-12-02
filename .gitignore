@@ -43,3 +43,7 @@ tmp/
 # Misc dev files
 *.local
 vercel_logs.txt
+
+# Docker
+.env.docker
+docker-volumes/
