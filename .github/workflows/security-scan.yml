@@ -22,7 +22,7 @@ jobs:
       # ZAP Baseline Scan - varredura passiva (não ataca, só observa)
       # Ideal para CI/CD pois é rápida e não invasiva
       - name: Run OWASP ZAP Baseline Scan
-        uses: zaproxy/action-baseline@v0.12.0
+        uses: zaproxy/action-baseline@v0.15.0
         with:
           # URL do seu app em produção ou staging
           target: 'https://nossocrmia.vercel.app'
