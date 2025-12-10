@@ -142,7 +142,32 @@ Agora vamos fazer as migrations rodarem automaticamente.
 
 ---
 
-## Passo 5: Rodar a GitHub Action (1-2 minutos)
+## Passo 5: Configurar Secrets de Segurança no Supabase (1 minuto)
+
+Antes de rodar as migrations, configure os secrets de segurança das Edge Functions:
+
+1. No Supabase Dashboard, vá em **Settings** → **Edge Functions**
+
+2. Na seção **Secrets**, adicione o seguinte secret:
+
+   **Chave de Encriptação** (protege API keys no banco)
+   ```
+   Name: DB_ENCRYPTION_KEY
+   Value: (gere no SQL Editor: SELECT encode(gen_random_bytes(16), 'hex'))
+   ```
+
+   ⚠️ **IMPORTANTE:** Guarde esse valor em local seguro!
+
+3. Clique em **Save** após adicionar o secret
+
+4. Verifique que a extensão **pgcrypto** está habilitada:
+   - Vá em **Database** → **Extensions**
+   - Procure por `pgcrypto`
+   - Se não estiver habilitada, clique para habilitar
+
+---
+
+## Passo 6: Rodar a GitHub Action (1-2 minutos)
 
 1. No seu repositório, vá em **Actions** (menu superior)
 
@@ -158,7 +183,8 @@ Agora vamos fazer as migrations rodarem automaticamente.
    ✓ Instala Supabase CLI
    ✓ Link com projeto
    ✓ Aplica migrations (cria 15+ tabelas)
-   ✓ Deploy Edge Functions (6 functions)
+   ✓ Aplica security-fixes.sql (auditoria + encriptação)
+   ✓ Deploy Edge Functions (7 functions incluindo ai-proxy)
    ✓ Concluído!
    ```
 
@@ -166,7 +192,7 @@ Agora vamos fazer as migrations rodarem automaticamente.
 
 ---
 
-## Passo 6: Criar Sua Empresa (30 segundos)
+## Passo 7: Criar Sua Empresa (30 segundos)
 
 1. Acesse a URL do seu deploy:
    ```
@@ -189,6 +215,9 @@ Agora vamos fazer as migrations rodarem automaticamente.
 
 6. **Pronto! 🎉** Você será automaticamente logado e verá o dashboard
 
+   ⚠️ **Nota de Segurança:** O setup só pode ser executado uma vez. Após criar a primeira empresa, 
+   o endpoint fica permanentemente bloqueado.
+
 ---
 
 ## 🎯 Tudo Funcionando!
@@ -197,7 +226,9 @@ Agora você tem:
 - ✅ Seu próprio CRM rodando em produção
 - ✅ Banco de dados PostgreSQL (Supabase)
 - ✅ Autenticação configurada
-- ✅ Edge Functions deployadas
+- ✅ Edge Functions deployadas com segurança
+- ✅ Sistema de auditoria ativo
+- ✅ API keys protegidas com encriptação
 - ✅ URL pública para acessar de qualquer lugar
 
 **Próximos passos:**
@@ -205,6 +236,70 @@ Agora você tem:
 - Explore o sistema de IA
 - Configure seu pipeline de vendas
 - Convide membros da equipe
+
+---
+
+## ⚙️ Configuração de IA (Opcional)
+
+Para usar as funcionalidades de IA (análise de leads, geração de emails, etc.):
+
+1. **Configure sua API Key do Gemini:**
+   - Vá em **Configurações** → **IA** no CRM
+   - Cole sua API Key do Google AI Studio
+   - A chave será armazenada de forma **encriptada** no banco
+
+2. **Aceite os termos de uso:**
+   - Na primeira vez que usar IA, você verá um modal de consentimento LGPD
+   - Leia os termos e aceite para habilitar as funcionalidades
+
+3. **Funcionalidades disponíveis:**
+   - Análise automática de leads
+   - Geração de emails e mensagens
+   - Transcrição de áudios
+   - Assistente de vendas com IA
+
+⚠️ **Segurança:** Todas as chamadas de IA passam pelo backend (Edge Function `ai-proxy`), garantindo que sua API key nunca é exposta no frontend.
+
+---
+
+## ⚙️ Migração de API Keys (Para deploys existentes)
+
+Se você já tem um deploy e precisa migrar API keys para o novo formato encriptado:
+
+1. **Configure o secret de encriptação** (se ainda não fez):
+   - Supabase Dashboard → Settings → Edge Functions → Secrets
+   - Adicione `DB_ENCRYPTION_KEY` (gere com `openssl rand -hex 16`)
+
+2. **Execute o script de migração:**
+   - Vá em Supabase Dashboard → SQL Editor
+   - Cole e execute:
+   ```sql
+   SET app.encryption_key = 'sua-chave-aqui';
+   
+   UPDATE public.user_settings
+   SET ai_api_key_encrypted = pgp_sym_encrypt(
+     ai_api_key::TEXT,
+     current_setting('app.encryption_key'),
+     'compress-algo=1, cipher-algo=aes256'
+   )
+   WHERE ai_api_key IS NOT NULL
+     AND ai_api_key != ''
+     AND (ai_api_key_encrypted IS NULL OR LENGTH(ai_api_key_encrypted) = 0);
+   ```
+
+3. **Valide a migração:**
+   ```sql
+   SELECT COUNT(*) as migrated FROM public.user_settings
+   WHERE ai_api_key_encrypted IS NOT NULL;
+   ```
+
+4. **Limpe dados em texto plano** (após validar):
+   ```sql
+   UPDATE public.user_settings SET ai_api_key = NULL
+   WHERE ai_api_key_encrypted IS NOT NULL;
+   ```
+
+Para mais detalhes, consulte: `supabase/migrations/migrate-api-keys.sql`
 
 ---
 

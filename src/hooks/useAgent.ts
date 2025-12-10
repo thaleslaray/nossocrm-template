@@ -1,3 +1,34 @@
+/**
+ * @fileoverview Hook de Agente de IA com Streaming
+ * 
+ * Hook que gerencia conversação com múltiplos provedores de IA (Google, OpenAI, Anthropic)
+ * usando streaming de texto para respostas em tempo real.
+ * 
+ * @module hooks/useAgent
+ * 
+ * Funcionalidades:
+ * - Streaming de texto em tempo real
+ * - Suporte a anexos (imagens, áudios, arquivos)
+ * - Persistência de histórico em localStorage
+ * - Configurações avançadas (thinking mode, web search)
+ * - Cache de contexto para Anthropic
+ * 
+ * @example
+ * ```tsx
+ * const {
+ *   messages,
+ *   input,
+ *   setInput,
+ *   handleSubmit,
+ *   isLoading
+ * } = useAgent({
+ *   id: 'deal-123',
+ *   system: 'Você é um assistente de vendas.',
+ *   onFinish: (msg) => console.log('Resposta:', msg.content)
+ * });
+ * ```
+ */
+
 import { useState, useCallback, useEffect } from 'react';
 import { streamText, CoreMessage } from 'ai';
 import { google } from '@ai-sdk/google';
@@ -5,6 +36,16 @@ import { anthropic } from '@ai-sdk/anthropic';
 import { getModel } from '@/services/ai/config';
 import { useCRM } from '@/context/CRMContext';
 
+/**
+ * Anexo em mensagem do chat
+ * 
+ * @interface Attachment
+ * @property {string} id - Identificador único do anexo
+ * @property {'image' | 'file' | 'audio'} type - Tipo do anexo
+ * @property {string} url - URL ou Data URL do arquivo
+ * @property {string} [name] - Nome original do arquivo
+ * @property {string} [mimeType] - Tipo MIME do arquivo
+ */
 export interface Attachment {
   id: string;
   type: 'image' | 'file' | 'audio';
@@ -13,6 +54,15 @@ export interface Attachment {
   mimeType?: string;
 }
 
+/**
+ * Mensagem na conversa com a IA
+ * 
+ * @interface Message
+ * @property {string} id - UUID da mensagem
+ * @property {'user' | 'assistant' | 'system'} role - Papel do autor
+ * @property {string} content - Conteúdo textual da mensagem
+ * @property {Attachment[]} [attachments] - Anexos opcionais
+ */
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system';
@@ -20,13 +70,58 @@ export interface Message {
   attachments?: Attachment[];
 }
 
+/**
+ * Opções de configuração do hook useAgent
+ * 
+ * @interface UseAgentOptions
+ * @property {Message[]} [initialMessages] - Mensagens iniciais da conversa
+ * @property {string} [system] - System prompt para contexto
+ * @property {(message: Message) => void} [onFinish] - Callback ao completar resposta
+ * @property {string} [id] - Chave de persistência no localStorage
+ */
 interface UseAgentOptions {
   initialMessages?: Message[];
   system?: string;
   onFinish?: (message: Message) => void;
-  id?: string; // Persistence Key
+  id?: string;
 }
 
+/**
+ * Hook para gerenciar conversação com IA usando streaming
+ * 
+ * Fornece uma interface completa para chat com IA incluindo:
+ * - Gerenciamento de mensagens com otimistic updates
+ * - Streaming de respostas em tempo real
+ * - Suporte a múltiplos provedores (Google Gemini, OpenAI, Anthropic)
+ * - Processamento de anexos (imagens, áudio)
+ * - Persistência automática do histórico
+ * 
+ * @param {UseAgentOptions} options - Configurações do agente
+ * @returns {Object} Estado e controles da conversação
+ * @returns {Message[]} return.messages - Histórico de mensagens
+ * @returns {string} return.input - Valor atual do input
+ * @returns {(value: string) => void} return.setInput - Setter do input
+ * @returns {(content: string, attachments?: Attachment[]) => Promise<void>} return.append - Envia mensagem
+ * @returns {() => Promise<void>} return.handleSubmit - Submete input atual
+ * @returns {boolean} return.isLoading - Se está aguardando resposta
+ * @returns {Error | null} return.error - Erro se houver
+ * @returns {(messages: Message[]) => void} return.setMessages - Reset manual do histórico
+ * 
+ * @example
+ * ```tsx
+ * function ChatComponent() {
+ *   const agent = useAgent({ id: 'my-chat', system: 'Seja conciso.' });
+ *   
+ *   return (
+ *     <form onSubmit={agent.handleSubmit}>
+ *       {agent.messages.map(m => <Message key={m.id} {...m} />)}
+ *       <input value={agent.input} onChange={e => agent.setInput(e.target.value)} />
+ *       <button disabled={agent.isLoading}>Enviar</button>
+ *     </form>
+ *   );
+ * }
+ * ```
+ */
 export function useAgent({ initialMessages = [], system, onFinish, id }: UseAgentOptions = {}) {
   const { aiProvider, aiApiKey, aiModel, aiThinking, aiSearch, aiAnthropicCaching } = useCRM();
 
@@ -264,11 +359,8 @@ export function useAgent({ initialMessages = [], system, onFinish, id }: UseAgen
           }
         }
 
-        console.log('Calling streamText with:', {
-          model: aiModel,
-          system: systemPrompt ? 'present' : 'none',
-          historyLength: history.length,
-        });
+
+
 
         const result = await streamText({
           model,

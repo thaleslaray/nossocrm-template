@@ -51,12 +51,12 @@ export const ActivitiesProvider: React.FC<{ children: ReactNode }> = ({ children
   // ============================================
   const addActivity = useCallback(
     async (activity: Omit<Activity, 'id' | 'createdAt'>): Promise<Activity | null> => {
-      if (!profile?.company_id) {
-        console.error('Usuário não tem empresa associada');
+      if (!profile) {
+        console.error('Usuário não autenticado');
         return null;
       }
 
-      const { data, error: addError } = await activitiesService.create(activity, profile.company_id);
+      const { data, error: addError } = await activitiesService.create(activity);
 
       if (addError) {
         console.error('Erro ao criar atividade:', addError.message);
@@ -68,7 +68,7 @@ export const ActivitiesProvider: React.FC<{ children: ReactNode }> = ({ children
 
       return data;
     },
-    [profile?.company_id, queryClient]
+    [profile?.organization_id, queryClient]
   );
 
   const updateActivity = useCallback(async (id: string, updates: Partial<Activity>) => {

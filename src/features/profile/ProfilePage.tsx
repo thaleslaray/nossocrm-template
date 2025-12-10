@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { getErrorMessage } from '@/utils/errorUtils';
 import { useAuth } from '@/context/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { Loader2, User, Mail, Shield, Calendar, Key, Check, Eye, EyeOff, Phone, Pencil, Save, Camera, X } from 'lucide-react';
@@ -15,6 +16,15 @@ export const ProfilePage: React.FC = () => {
     const [uploadingAvatar, setUploadingAvatar] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Validação de senha
+    const passwordRequirements = {
+        minLength: newPassword.length >= 6,
+        hasLowercase: /[a-z]/.test(newPassword),
+        hasUppercase: /[A-Z]/.test(newPassword),
+        hasDigit: /\d/.test(newPassword),
+    };
+    const isPasswordValid = Object.values(passwordRequirements).every(Boolean);
 
     // Campos do perfil
     const [firstName, setFirstName] = useState('');
@@ -121,7 +131,7 @@ export const ProfilePage: React.FC = () => {
             setMessage({ type: 'success', text: 'Foto atualizada!' });
         } catch (err: any) {
             console.error('Upload error:', err);
-            setMessage({ type: 'error', text: err.message || 'Erro ao fazer upload da foto.' });
+            setMessage({ type: 'error', text: getErrorMessage(err) });
         } finally {
             setUploadingAvatar(false);
         }
@@ -152,7 +162,7 @@ export const ProfilePage: React.FC = () => {
             if (refreshProfile) await refreshProfile();
             setMessage({ type: 'success', text: 'Foto removida!' });
         } catch (err: any) {
-            setMessage({ type: 'error', text: err.message || 'Erro ao remover foto.' });
+            setMessage({ type: 'error', text: getErrorMessage(err) });
         } finally {
             setUploadingAvatar(false);
         }
@@ -181,7 +191,7 @@ export const ProfilePage: React.FC = () => {
             setMessage({ type: 'success', text: 'Perfil atualizado com sucesso!' });
             setIsEditingProfile(false);
         } catch (err: any) {
-            setMessage({ type: 'error', text: err.message || 'Erro ao salvar perfil.' });
+            setMessage({ type: 'error', text: getErrorMessage(err) });
         } finally {
             setSavingProfile(false);
         }
@@ -189,14 +199,14 @@ export const ProfilePage: React.FC = () => {
 
     const handleChangePassword = async (e: React.FormEvent) => {
         e.preventDefault();
-        
+
         if (newPassword !== confirmPassword) {
             setMessage({ type: 'error', text: 'As senhas não coincidem.' });
             return;
         }
 
-        if (newPassword.length < 6) {
-            setMessage({ type: 'error', text: 'A nova senha deve ter pelo menos 6 caracteres.' });
+        if (!isPasswordValid) {
+            setMessage({ type: 'error', text: 'A senha não atende aos requisitos mínimos.' });
             return;
         }
 
@@ -215,7 +225,7 @@ export const ProfilePage: React.FC = () => {
             setNewPassword('');
             setConfirmPassword('');
         } catch (err: any) {
-            setMessage({ type: 'error', text: err.message || 'Erro ao alterar senha.' });
+            setMessage({ type: 'error', text: getErrorMessage(err) });
         } finally {
             setLoading(false);
         }
@@ -233,6 +243,29 @@ export const ProfilePage: React.FC = () => {
         return value.slice(0, 15);
     };
 
+    const [isChangingEmail, setIsChangingEmail] = useState(false);
+    const [newEmail, setNewEmail] = useState('');
+
+    // Altera email
+    const handleChangeEmail = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setMessage(null);
+        setLoading(true);
+
+        try {
+            const { error } = await supabase.auth.updateUser({ email: newEmail });
+            if (error) throw error;
+
+            setMessage({ type: 'success', text: 'E-mail de confirmação enviado para o novo endereço!' });
+            setIsChangingEmail(false);
+            setNewEmail('');
+        } catch (err: any) {
+            setMessage({ type: 'error', text: getErrorMessage(err) });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return (
         <div className="max-w-2xl mx-auto pb-10">
             {/* Header */}
@@ -247,11 +280,10 @@ export const ProfilePage: React.FC = () => {
 
             {/* Mensagem de feedback */}
             {message && (
-                <div className={`flex items-center gap-2 p-4 rounded-xl text-sm mb-6 ${
-                    message.type === 'success'
-                        ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-500/20'
-                        : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/20'
-                }`}>
+                <div className={`flex items-center gap-2 p-4 rounded-xl text-sm mb-6 ${message.type === 'success'
+                    ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400 border border-green-200 dark:border-green-500/20'
+                    : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-500/20'
+                    }`}>
                     {message.type === 'success' && <Check className="w-4 h-4" />}
                     {message.text}
                 </div>
@@ -264,9 +296,9 @@ export const ProfilePage: React.FC = () => {
                         {/* Avatar Grande com Upload */}
                         <div className="relative group">
                             {avatarUrl ? (
-                                <img 
-                                    src={avatarUrl} 
-                                    alt="Avatar" 
+                                <img
+                                    src={avatarUrl}
+                                    alt="Avatar"
                                     className="w-20 h-20 rounded-2xl object-cover shadow-xl"
                                 />
                             ) : (
@@ -274,7 +306,7 @@ export const ProfilePage: React.FC = () => {
                                     {getInitials()}
                                 </div>
                             )}
-                            
+
                             {/* Overlay de upload */}
                             <div className="absolute inset-0 rounded-2xl bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                 {uploadingAvatar ? (
@@ -321,11 +353,10 @@ export const ProfilePage: React.FC = () => {
                                 </p>
                             )}
                             <div className="flex items-center gap-3 mt-2">
-                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${
-                                    profile?.role === 'admin'
-                                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
-                                        : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                                }`}>
+                                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${profile?.role === 'admin'
+                                    ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300'
+                                    : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                                    }`}>
                                     <Shield className="w-3 h-3" />
                                     {profile?.role === 'admin' ? 'Admin' : 'Vendedor'}
                                 </span>
@@ -384,7 +415,7 @@ export const ProfilePage: React.FC = () => {
                                 value={nickname}
                                 onChange={(e) => setNickname(e.target.value)}
                                 className="w-full px-4 py-2.5 border-2 border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-primary-500 transition-all"
-                                placeholder="Ex: Thales, Thalinho, T..."
+                                placeholder="Seu apelido"
                             />
                         </div>
 
@@ -439,10 +470,57 @@ export const ProfilePage: React.FC = () => {
                 ) : (
                     /* Modo de visualização */
                     <div className="grid gap-4 pt-4 border-t border-slate-100 dark:border-white/5">
-                        <div className="flex items-center gap-3 text-sm">
-                            <Mail className="w-4 h-4 text-slate-400" />
-                            <span className="text-slate-600 dark:text-slate-300">{profile?.email}</span>
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3 text-sm">
+                                <Mail className="w-4 h-4 text-slate-400" />
+                                <span className="text-slate-600 dark:text-slate-300">{profile?.email}</span>
+                            </div>
+                            {!isChangingEmail && (
+                                <button
+                                    onClick={() => setIsChangingEmail(true)}
+                                    className="text-xs text-primary-600 hover:text-primary-700 dark:text-primary-400 font-medium"
+                                >
+                                    Alterar
+                                </button>
+                            )}
                         </div>
+
+                        {/* Alterar email form */}
+                        {isChangingEmail && (
+                            <form onSubmit={handleChangeEmail} className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl space-y-3">
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                    Novo E-mail
+                                </label>
+                                <input
+                                    type="email"
+                                    value={newEmail}
+                                    onChange={(e) => setNewEmail(e.target.value)}
+                                    className="w-full px-4 py-2 border border-slate-200 dark:border-slate-700 rounded-lg bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:border-primary-500"
+                                    placeholder="seu@novoemail.com"
+                                    required
+                                />
+                                <div className="flex justify-end gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setIsChangingEmail(false);
+                                            setNewEmail('');
+                                        }}
+                                        className="px-3 py-1.5 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900"
+                                    >
+                                        Cancelar
+                                    </button>
+                                    <button
+                                        type="submit"
+                                        disabled={loading}
+                                        className="px-3 py-1.5 text-sm bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50"
+                                    >
+                                        {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Confirmar'}
+                                    </button>
+                                </div>
+                            </form>
+                        )}
+
                         {phone && (
                             <div className="flex items-center gap-3 text-sm">
                                 <Phone className="w-4 h-4 text-slate-400" />
@@ -505,6 +583,27 @@ export const ProfilePage: React.FC = () => {
                                     {showPasswords ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                                 </button>
                             </div>
+
+                            {/* Password Requirements */}
+                            {newPassword.length > 0 && (
+                                <div className="mt-2 space-y-1">
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">Requisitos:</p>
+                                    <div className="grid grid-cols-2 gap-1 text-xs">
+                                        <span className={passwordRequirements.minLength ? 'text-green-500' : 'text-slate-400'}>
+                                            {passwordRequirements.minLength ? '✓' : '○'} Mínimo 6 caracteres
+                                        </span>
+                                        <span className={passwordRequirements.hasLowercase ? 'text-green-500' : 'text-slate-400'}>
+                                            {passwordRequirements.hasLowercase ? '✓' : '○'} Letra minúscula
+                                        </span>
+                                        <span className={passwordRequirements.hasUppercase ? 'text-green-500' : 'text-slate-400'}>
+                                            {passwordRequirements.hasUppercase ? '✓' : '○'} Letra maiúscula
+                                        </span>
+                                        <span className={passwordRequirements.hasDigit ? 'text-green-500' : 'text-slate-400'}>
+                                            {passwordRequirements.hasDigit ? '✓' : '○'} Número
+                                        </span>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                         <div>
@@ -515,18 +614,28 @@ export const ProfilePage: React.FC = () => {
                                 type={showPasswords ? 'text' : 'password'}
                                 value={confirmPassword}
                                 onChange={(e) => setConfirmPassword(e.target.value)}
-                                className="w-full px-4 py-2.5 border-2 border-slate-200 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-primary-500 transition-all"
+                                className={`w-full px-4 py-2.5 border-2 rounded-xl bg-slate-50 dark:bg-slate-800/50 text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none transition-all ${confirmPassword.length > 0
+                                    ? (newPassword === confirmPassword && confirmPassword.length > 0)
+                                        ? 'border-green-500 focus:border-green-500'
+                                        : 'border-red-500 focus:border-red-500'
+                                    : 'border-slate-200 dark:border-slate-700 focus:border-primary-500'
+                                    }`}
                                 placeholder="Digite novamente"
                                 required
                             />
+                            {confirmPassword.length > 0 && newPassword !== confirmPassword && (
+                                <p className="mt-1 text-xs text-red-500">As senhas não coincidem</p>
+                            )}
+                            {confirmPassword.length > 0 && newPassword === confirmPassword && (
+                                <p className="mt-1 text-xs text-green-500">✓ Senhas coincidem</p>
+                            )}
                         </div>
 
                         {message && (
-                            <div className={`flex items-center gap-2 p-3 rounded-xl text-sm ${
-                                message.type === 'success'
-                                    ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400'
-                                    : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400'
-                            }`}>
+                            <div className={`flex items-center gap-2 p-3 rounded-xl text-sm ${message.type === 'success'
+                                ? 'bg-green-50 dark:bg-green-900/20 text-green-600 dark:text-green-400'
+                                : 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400'
+                                }`}>
                                 {message.type === 'success' && <Check className="w-4 h-4" />}
                                 {message.text}
                             </div>

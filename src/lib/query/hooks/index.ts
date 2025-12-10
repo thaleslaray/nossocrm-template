@@ -25,6 +25,8 @@ export {
 // Contacts
 export {
   useContacts,
+  useContactsPaginated,
+  useContactStageCounts,
   useContact,
   useContactsByCompany,
   useLeadContacts,
@@ -71,3 +73,9 @@ export {
   useDeleteBoardStage,
   useInvalidateBoards,
 } from './useBoardsQuery';
+
+// Unified Deal Movement
+export {
+  useMoveDeal,
+  useMoveDealSimple,
+} from './useMoveDeal';

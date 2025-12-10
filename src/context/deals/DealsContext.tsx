@@ -6,7 +6,7 @@ import React, {
   ReactNode,
 } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Deal, DealView, DealItem, Company, Contact } from '@/types';
+import { Deal, DealView, DealItem, Company, Contact, Board } from '@/types';
 import { dealsService } from '@/lib/supabase';
 import { useAuth } from '../AuthContext';
 import { queryKeys } from '@/lib/query';
@@ -60,12 +60,12 @@ export const DealsProvider: React.FC<{ children: ReactNode }> = ({ children }) =
   // ============================================
   const addDeal = useCallback(
     async (deal: Omit<Deal, 'id' | 'createdAt'>): Promise<Deal | null> => {
-      if (!profile?.company_id) {
-        console.error('Usuário não tem empresa associada');
+      if (!profile) {
+        console.error('Usuário não autenticado');
         return null;
       }
 
-      const { data, error: addError } = await dealsService.create(deal, profile.company_id);
+      const { data, error: addError } = await dealsService.create(deal);
 
       if (addError) {
         console.error('Erro ao criar deal:', addError.message);
@@ -78,7 +78,7 @@ export const DealsProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
       return data;
     },
-    [profile?.company_id, queryClient]
+    [profile, queryClient]
   );
 
   const updateDeal = useCallback(async (id: string, updates: Partial<Deal>) => {
@@ -89,8 +89,11 @@ export const DealsProvider: React.FC<{ children: ReactNode }> = ({ children }) =
       return;
     }
 
-    // Invalida cache para TanStack Query atualizar
+    // Invalida TODO o cache de deals (all + lists + details)
+    // queryKeys.deals.all = ['deals'] - isso invalida TODAS as queries que começam com 'deals'
     await queryClient.invalidateQueries({ queryKey: queryKeys.deals.all });
+    // Invalida também as listas explicitamente para garantir que o Kanban seja atualizado
+    await queryClient.invalidateQueries({ queryKey: queryKeys.deals.lists() });
   }, [queryClient]);
 
   const updateDealStatus = useCallback(
@@ -194,16 +197,25 @@ export const useDeals = () => {
 // Hook para deals com view projection (desnormalizado)
 export const useDealsView = (
   companyMap: Record<string, Company>,
-  contactMap: Record<string, Contact>
+  contactMap: Record<string, Contact>,
+  boards: Board[] = []
 ): DealView[] => {
   const { rawDeals } = useDeals();
 
   return useMemo(() => {
-    return rawDeals.map(deal => ({
-      ...deal,
-      companyName: companyMap[deal.companyId]?.name || 'Empresa Desconhecida',
-      contactName: contactMap[deal.contactId]?.name || 'Sem Contato',
-      contactEmail: contactMap[deal.contactId]?.email || '',
-    }));
-  }, [rawDeals, companyMap, contactMap]);
+    return rawDeals.map(deal => {
+      // Find the stage label from the board stages
+      const board = boards.find(b => b.id === deal.boardId);
+      const stage = board?.stages?.find(s => s.id === deal.status);
+
+      return {
+        ...deal,
+        companyName: companyMap[deal.companyId]?.name || 'Empresa Desconhecida',
+        clientCompanyName: companyMap[deal.clientCompanyId || deal.companyId]?.name,
+        contactName: contactMap[deal.contactId]?.name || 'Sem Contato',
+        contactEmail: contactMap[deal.contactId]?.email || '',
+        stageLabel: stage?.label || 'Desconhecido',
+      };
+    });
+  }, [rawDeals, companyMap, contactMap, boards]);
 };

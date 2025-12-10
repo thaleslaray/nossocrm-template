@@ -46,11 +46,11 @@ export const ContactsView: React.FC<ContactsViewProps> = ({
             <div key={contact.id} className="p-4 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center font-bold">
-                  {contact.name.charAt(0)}
+                  {(contact.name || '?').charAt(0)}
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white">{contact.name}</h3>
-                  <p className="text-sm text-slate-500">{contact.email}</p>
+                  <h3 className="font-bold text-slate-900 dark:text-white">{contact.name || 'Sem nome'}</h3>
+                  <p className="text-sm text-slate-500">{contact.email || '-'}</p>
                 </div>
               </div>
             </div>

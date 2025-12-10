@@ -3,6 +3,8 @@ name: Deploy Supabase
 on:
   push:
     branches: [main]
+    paths:
+      - 'supabase/**'
   workflow_dispatch:
 
 jobs:
@@ -18,10 +20,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Instala Supabase CLI
-        run: |
-          curl -fsSL https://github.com/supabase/cli/releases/latest/download/supabase_linux_amd64.tar.gz | tar -xz
-          sudo mv supabase /usr/local/bin/
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
 
       - name: Verifica instalação
         run: supabase --version

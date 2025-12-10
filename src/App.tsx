@@ -39,11 +39,13 @@ const ProfilePage = lazy(() =>
   import('@/features/profile/ProfilePage').then(m => ({ default: m.ProfilePage }))
 );
 
-// Layout wrapper for protected routes
+// Layout wrapper for protected routes with persisted Suspense
 const ProtectedLayout: React.FC = () => (
   <ProtectedRoute>
     <Layout>
-      <Outlet />
+      <Suspense fallback={<PageLoader />}>
+        <Outlet />
+      </Suspense>
     </Layout>
   </ProtectedRoute>
 );
@@ -56,33 +58,31 @@ const App: React.FC = () => {
           <AuthProvider>
             <CRMProvider>
               <HashRouter>
-                <Suspense fallback={<PageLoader />}>
-                  <Routes>
-                    {/* Public routes */}
-                    <Route path="/login" element={<Login />} />
-                    <Route path="/join" element={<JoinPage />} />
-                    <Route path="/setup" element={<SetupWizard />} />
+                <Routes>
+                  {/* Public routes */}
+                  <Route path="/login" element={<Login />} />
+                  <Route path="/join" element={<JoinPage />} />
+                  <Route path="/setup" element={<SetupWizard />} />
 
-                    {/* Protected routes with Layout */}
-                    <Route element={<ProtectedLayout />}>
-                      <Route index element={<DefaultRoute />} />
-                      <Route path="dashboard" element={<Dashboard />} />
-                      <Route path="inbox" element={<InboxPage />} />
-                      <Route path="boards" element={<BoardsPage />} />
-                      <Route path="pipeline" element={<BoardsPage />} />
-                      <Route path="contacts" element={<ContactsPage />} />
-                      <Route path="settings/*" element={<Settings />} />
-                      <Route path="activities" element={<ActivitiesPage />} />
-                      <Route path="reports" element={<ReportsPage />} />
-                      <Route path="profile" element={<ProfilePage />} />
-                      <Route path="ai" element={<AIHubPage />} />
-                      <Route path="decisions" element={<DecisionQueuePage />} />
-                    </Route>
+                  {/* Protected routes with Layout */}
+                  <Route element={<ProtectedLayout />}>
+                    <Route index element={<DefaultRoute />} />
+                    <Route path="dashboard" element={<Dashboard />} />
+                    <Route path="inbox" element={<InboxPage />} />
+                    <Route path="boards" element={<BoardsPage />} />
+                    <Route path="pipeline" element={<BoardsPage />} />
+                    <Route path="contacts" element={<ContactsPage />} />
+                    <Route path="settings/*" element={<Settings />} />
+                    <Route path="activities" element={<ActivitiesPage />} />
+                    <Route path="reports" element={<ReportsPage />} />
+                    <Route path="profile" element={<ProfilePage />} />
+                    <Route path="ai" element={<AIHubPage />} />
+                    <Route path="decisions" element={<DecisionQueuePage />} />
+                  </Route>
 
-                    {/* Catch-all redirect */}
-                    <Route path="*" element={<Navigate to="/" replace />} />
-                  </Routes>
-                </Suspense>
+                  {/* Catch-all redirect */}
+                  <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
               </HashRouter>
             </CRMProvider>
           </AuthProvider>

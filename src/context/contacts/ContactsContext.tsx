@@ -53,16 +53,16 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
   // ============================================
   // TanStack Query como fonte única de verdade
   // ============================================
-  const { 
-    data: contacts = [], 
-    isLoading: contactsLoading, 
-    error: contactsQueryError 
+  const {
+    data: contacts = [],
+    isLoading: contactsLoading,
+    error: contactsQueryError
   } = useTanStackContacts();
-  
-  const { 
-    data: companies = [], 
-    isLoading: companiesLoading, 
-    error: companiesQueryError 
+
+  const {
+    data: companies = [],
+    isLoading: companiesLoading,
+    error: companiesQueryError
   } = useTanStackCompanies();
 
   // Converte erros do TanStack Query para string
@@ -83,12 +83,12 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
   // ============================================
   const addContact = useCallback(
     async (contact: Omit<Contact, 'id' | 'createdAt'>): Promise<Contact | null> => {
-      if (!profile?.company_id) {
-        console.error('Usuário não tem empresa associada');
+      if (!profile) {
+        console.error('Usuário não autenticado');
         return null;
       }
 
-      const { data, error } = await contactsService.create(contact, profile.company_id);
+      const { data, error } = await contactsService.create(contact);
 
       if (error) {
         console.error('Erro ao criar contato:', error.message);
@@ -100,7 +100,7 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
 
       return data;
     },
-    [profile?.company_id, queryClient]
+    [profile, queryClient]
   );
 
   const updateContact = useCallback(async (id: string, updates: Partial<Contact>) => {
@@ -130,12 +130,12 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
   // Company CRUD
   const addCompany = useCallback(
     async (company: Omit<Company, 'id' | 'createdAt'>): Promise<Company | null> => {
-      if (!profile?.company_id) {
-        console.error('Usuário não tem empresa associada');
+      if (!profile) {
+        console.error('Usuário não autenticado');
         return null;
       }
 
-      const { data, error } = await companiesService.create(company, profile.company_id);
+      const { data, error } = await companiesService.create(company);
 
       if (error) {
         console.error('Erro ao criar empresa:', error.message);
@@ -147,7 +147,7 @@ export const ContactsProvider: React.FC<{ children: ReactNode }> = ({ children }
 
       return data;
     },
-    [profile?.company_id, queryClient]
+    [profile, queryClient]
   );
 
   const updateCompany = useCallback(async (id: string, updates: Partial<Company>) => {

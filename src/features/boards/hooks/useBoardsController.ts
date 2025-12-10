@@ -12,13 +12,14 @@ import {
 } from '@/lib/query/hooks/useBoardsQuery';
 import {
   useDealsByBoard,
-  useUpdateDealStatus,
 } from '@/lib/query/hooks/useDealsQuery';
+import { useMoveDeal } from '@/lib/query/hooks/useMoveDeal';
 import { useCreateActivity } from '@/lib/query/hooks/useActivitiesQuery';
 import { usePersistedState } from '@/hooks/usePersistedState';
-import { useRealtimeSyncKanban } from '@/lib/realtime';
+import { useRealtimeSyncKanban } from '@/lib/realtime/useRealtimeSync';
 import { useToast } from '@/context/ToastContext';
 import { useAuth } from '@/context/AuthContext';
+import { useCRM } from '@/context/CRMContext';
 
 export const isDealRotting = (deal: DealView) => {
   const dateToCheck = deal.lastStageChangeDate || deal.updatedAt;
@@ -39,7 +40,7 @@ export const getActivityStatus = (deal: DealView) => {
 export const useBoardsController = () => {
   // Toast for feedback
   const { addToast } = useToast();
-  const { profile } = useAuth();
+  const { profile, organizationId } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // TanStack Query hooks
@@ -63,12 +64,11 @@ export const useBoardsController = () => {
       setActiveBoardId(defaultBoard.id);
       return;
     }
-    
+
     // Se o activeBoardId não existe mais nos boards carregados, limpa e usa default
     if (activeBoardId && boards.length > 0) {
       const boardExists = boards.some(b => b.id === activeBoardId);
       if (!boardExists) {
-        console.warn('[useBoardsController] Board ativo não existe mais, resetando para default:', activeBoardId);
         const newActiveId = defaultBoard?.id || boards[0]?.id || null;
         setActiveBoardId(newActiveId);
       }
@@ -87,8 +87,11 @@ export const useBoardsController = () => {
 
   // Deals for active board - usa o ID efetivo
   const { data: deals = [], isLoading: dealsLoading } = useDealsByBoard(effectiveActiveBoardId || '');
-  const updateDealStatusMutation = useUpdateDealStatus();
+  const moveDealMutation = useMoveDeal();
   const createActivityMutation = useCreateActivity();
+
+  // Get lifecycle stages from CRM context for automations
+  const { lifecycleStages } = useCRM();
 
   // Enable realtime sync for Kanban
   useRealtimeSyncKanban();
@@ -98,13 +101,13 @@ export const useBoardsController = () => {
 
   //View State
   const [viewMode, setViewMode] = useState<'kanban' | 'list'>('kanban');
-  const [isFilterOpen, setIsFilterOpen] = useState(false);
+
   const [isCreateBoardModalOpen, setIsCreateBoardModalOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [editingBoard, setEditingBoard] = useState<Board | null>(null);
-  const [boardToDelete, setBoardToDelete] = useState<{ 
-    id: string; 
-    name: string; 
+  const [boardToDelete, setBoardToDelete] = useState<{
+    id: string;
+    name: string;
     dealCount: number;
     targetBoardId?: string;
   } | null>(null);
@@ -112,13 +115,35 @@ export const useBoardsController = () => {
   // Filter State
   const [searchTerm, setSearchTerm] = useState('');
   const [ownerFilter, setOwnerFilter] = useState<'all' | 'mine'>('all');
+  const [statusFilter, setStatusFilter] = useState<'open' | 'won' | 'lost' | 'all'>('open');
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+
+  // Initialize filters from URL
+  useEffect(() => {
+    const viewParam = searchParams.get('view');
+    if (viewParam === 'list' || viewParam === 'kanban') {
+      setViewMode(viewParam);
+    }
+
+    const statusParam = searchParams.get('status');
+    if (statusParam === 'open' || statusParam === 'won' || statusParam === 'lost' || statusParam === 'all') {
+      setStatusFilter(statusParam);
+    }
+  }, [searchParams]);
 
   // Interaction State
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [selectedDealId, setSelectedDealId] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [openActivityMenuId, setOpenActivityMenuId] = useState<string | null>(null);
+
+  // Loss Reason Modal State
+  const [lossReasonModal, setLossReasonModal] = useState<{
+    isOpen: boolean;
+    dealId: string;
+    dealTitle: string;
+    stageId: string;
+  } | null>(null);
 
   // Open deal from URL param (e.g., /boards?deal=xxx)
   useEffect(() => {
@@ -155,11 +180,11 @@ export const useBoardsController = () => {
 
     return deals.filter(l => {
       const matchesSearch =
-        l.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (l.title || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (l.companyName || '').toLowerCase().includes(searchTerm.toLowerCase());
 
       const matchesOwner =
-        ownerFilter === 'all' || (l.owner?.name || '').includes('Thales') || l.owner?.name === 'Eu';
+        ownerFilter === 'all' || l.ownerId === profile?.id;
 
       let matchesDate = true;
       if (dateRange.start) {
@@ -171,23 +196,44 @@ export const useBoardsController = () => {
         matchesDate = matchesDate && new Date(l.createdAt) <= endDate;
       }
 
-      // RECENT WINS LOGIC:
-      // Se estiver Ganho ou Perdido, só mostra se foi atualizado nos últimos 30 dias
+      // Status Filter Logic
+      let matchesStatus = true;
+      if (statusFilter === 'open') {
+        matchesStatus = !l.isWon && !l.isLost;
+      } else if (statusFilter === 'won') {
+        matchesStatus = l.isWon;
+      } else if (statusFilter === 'lost') {
+        matchesStatus = l.isLost;
+      }
+
       let matchesRecent = true;
-      if (l.isWon || l.isLost) {
-        const lastUpdate = new Date(l.updatedAt);
-        if (lastUpdate < cutoffDate) {
-          matchesRecent = false;
+      if (statusFilter === 'open' || statusFilter === 'all') {
+        if (l.isWon || l.isLost) {
+          const lastUpdate = new Date(l.updatedAt);
+          if (lastUpdate < cutoffDate) {
+            matchesRecent = false;
+          }
         }
       }
 
-      return matchesSearch && matchesOwner && matchesDate && matchesRecent;
+      return matchesSearch && matchesOwner && matchesDate && matchesStatus && matchesRecent;
+    }).map(deal => {
+      // Enrich owner info if it matches current user
+      if (deal.ownerId === profile?.id || deal.ownerId === (profile as any)?.user_id) { // Fallback for some profile types
+        return {
+          ...deal,
+          owner: {
+            name: profile?.nickname || profile?.first_name || 'Eu',
+            avatar: profile?.avatar_url || ''
+          }
+        };
+      }
+      return deal;
     });
-  }, [deals, searchTerm, ownerFilter, dateRange]);
+  }, [deals, searchTerm, ownerFilter, dateRange, statusFilter, profile]);
 
   // Drag & Drop Handlers
   const handleDragStart = (e: React.DragEvent, id: string) => {
-    console.log('[DnD] Drag started:', id);
     setDraggingId(id);
     e.dataTransfer.setData('dealId', id);
     e.dataTransfer.effectAllowed = 'move';
@@ -201,18 +247,94 @@ export const useBoardsController = () => {
   const handleDrop = (e: React.DragEvent, stageId: string) => {
     e.preventDefault();
     const dealId = e.dataTransfer.getData('dealId') || lastMouseDownDealId.current;
-    console.log('[DnD] Drop:', { dealId, stageId });
-    if (dealId) {
-      let lossReason = undefined;
-      if (stageId === DealStatus.CLOSED_LOST) {
-        const reason = window.prompt(
-          'Qual o motivo da perda? (Ex: Preço, Concorrência, Desistência)'
-        );
-        if (reason) lossReason = reason;
+    if (dealId && activeBoard) {
+      const deal = deals.find(d => d.id === dealId);
+      if (!deal) {
+        setDraggingId(null);
+        return;
       }
-      updateDealStatusMutation.mutate({ id: dealId, status: stageId, lossReason });
+
+      // Find the target stage to check if it's a won/lost stage
+      const targetStage = activeBoard.stages.find(s => s.id === stageId);
+
+      // Check linkedLifecycleStage to determine won/lost status
+      if (targetStage?.linkedLifecycleStage === 'OTHER') {
+        // Dropping into LOST stage - open modal to ask for reason
+        setLossReasonModal({
+          isOpen: true,
+          dealId,
+          dealTitle: deal.title,
+          stageId,
+        });
+      } else {
+        // Use unified moveDeal for all other cases (WON or regular stages)
+        moveDealMutation.mutate({
+          dealId,
+          targetStageId: stageId,
+          deal,
+          board: activeBoard,
+          lifecycleStages,
+        });
+      }
     }
     setDraggingId(null);
+  };
+
+  // Handler for loss reason modal confirmation
+  const handleLossReasonConfirm = (reason: string) => {
+    if (lossReasonModal && activeBoard) {
+      const deal = deals.find(d => d.id === lossReasonModal.dealId);
+      if (deal) {
+        moveDealMutation.mutate({
+          dealId: lossReasonModal.dealId,
+          targetStageId: lossReasonModal.stageId,
+          lossReason: reason,
+          deal,
+          board: activeBoard,
+          lifecycleStages,
+        });
+      }
+      setLossReasonModal(null);
+    }
+  };
+
+  const handleLossReasonClose = () => {
+    // User cancelled - don't move the deal
+    setLossReasonModal(null);
+  };
+
+  /**
+   * Keyboard-accessible handler to move a deal to a new stage.
+   * This is the accessibility alternative to drag-and-drop.
+   */
+  const handleMoveDealToStage = (dealId: string, newStageId: string) => {
+    if (!activeBoard) return;
+
+    const deal = deals.find(d => d.id === dealId);
+    if (!deal) return;
+
+    // Find the target stage to check if it's a lost stage
+    const targetStage = activeBoard.stages.find(s => s.id === newStageId);
+
+    // Check linkedLifecycleStage to determine if this is a loss stage
+    if (targetStage?.linkedLifecycleStage === 'OTHER') {
+      // Opening a lost stage - need to ask for reason via modal
+      setLossReasonModal({
+        isOpen: true,
+        dealId,
+        dealTitle: deal.title,
+        stageId: newStageId,
+      });
+    } else {
+      // Regular move or WON stage
+      moveDealMutation.mutate({
+        dealId,
+        targetStageId: newStageId,
+        deal,
+        board: activeBoard,
+        lifecycleStages,
+      });
+    }
   };
 
   const handleQuickAddActivity = (
@@ -231,14 +353,16 @@ export const useBoardsController = () => {
     };
 
     createActivityMutation.mutate({
-      dealId,
-      dealTitle,
-      type,
-      title: titles[type],
-      description: 'Agendado via Acesso Rápido',
-      date: tomorrow.toISOString(),
-      completed: false,
-      user: { name: 'Eu', avatar: '' },
+      activity: {
+        dealId,
+        dealTitle,
+        type,
+        title: titles[type],
+        description: 'Agendado via Acesso Rápido',
+        date: tomorrow.toISOString(),
+        completed: false,
+        user: { name: 'Eu', avatar: '' },
+      },
     });
     setOpenActivityMenuId(null);
   };
@@ -249,7 +373,7 @@ export const useBoardsController = () => {
   };
 
   const handleCreateBoard = async (boardData: Omit<Board, 'id' | 'createdAt'>, order?: number) => {
-    createBoardMutation.mutate({ board: boardData, order, companyId: profile?.company_id }, {
+    createBoardMutation.mutate({ board: boardData, order }, {
       onSuccess: newBoard => {
         if (newBoard) {
           setActiveBoardId(newBoard.id);
@@ -277,6 +401,11 @@ export const useBoardsController = () => {
           updates: {
             name: boardData.name,
             description: boardData.description,
+            nextBoardId: boardData.nextBoardId,
+            linkedLifecycleStage: boardData.linkedLifecycleStage,
+            wonStageId: boardData.wonStageId,
+            lostStageId: boardData.lostStageId,
+            stages: boardData.stages,
           },
         },
         {
@@ -294,12 +423,12 @@ export const useBoardsController = () => {
     if (!board) return;
 
     // Verifica quantos deals tem
-    const result = await import('@/lib/supabase/boards').then(m => 
+    const result = await import('@/lib/supabase/boards').then(m =>
       m.boardsService.canDelete(boardId)
     );
-    
-    setBoardToDelete({ 
-      id: boardId, 
+
+    setBoardToDelete({
+      id: boardId,
       name: board.name,
       dealCount: result.dealCount ?? 0
     });
@@ -316,7 +445,7 @@ export const useBoardsController = () => {
         // Deleta todos os deals do board primeiro
         const { dealsService } = await import('@/lib/supabase/deals');
         const { error: deleteDealsError } = await dealsService.deleteByBoardId(boardToDelete.id);
-        
+
         if (deleteDealsError) {
           addToast('Erro ao excluir negócios: ' + deleteDealsError.message, 'error');
           return;
@@ -422,10 +551,11 @@ export const useBoardsController = () => {
     setSearchTerm,
     ownerFilter,
     setOwnerFilter,
+    statusFilter,
+    setStatusFilter,
     dateRange,
     setDateRange,
-    isFilterOpen,
-    setIsFilterOpen,
+
     draggingId,
     selectedDealId,
     setSelectedDealId,
@@ -439,8 +569,13 @@ export const useBoardsController = () => {
     handleDragStart,
     handleDragOver,
     handleDrop,
+    handleMoveDealToStage,
     handleQuickAddActivity,
     setLastMouseDownDealId,
+    // Loss Reason Modal
+    lossReasonModal,
+    handleLossReasonConfirm,
+    handleLossReasonClose,
   };
 };
 

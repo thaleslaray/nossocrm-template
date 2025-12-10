@@ -1,18 +1,52 @@
+/**
+ * @fileoverview Migração de Dados do LocalStorage
+ * 
+ * Script de migração one-time para atualizar estrutura de dados
+ * legados armazenados em localStorage para o formato atual.
+ * 
+ * @module utils/migrateLocalStorage
+ * 
+ * Migrações realizadas:
+ * - Converte Leads antigos para Contacts com stage LEAD
+ * - Cria Board padrão se não existir
+ * 
+ * @remarks
+ * Este script é executado automaticamente na inicialização do app
+ * e marca a migração como concluída em localStorage para não
+ * executar novamente.
+ */
+
 import { Contact, ContactStage, Lead, Board, DEFAULT_BOARD_STAGES } from '@/types';
 
+/** Chave no localStorage que marca migração como concluída */
 const MIGRATION_KEY = 'crm_migration_v1_completed';
 
+/**
+ * Executa migração v1 de dados do localStorage
+ * 
+ * Converte estrutura de dados legada para o formato atual:
+ * 1. Migra Leads para Contacts com stage=LEAD
+ * 2. Garante existência do Board padrão de vendas
+ * 
+ * A migração só executa uma vez (idempotente).
+ * 
+ * @example
+ * ```tsx
+ * // No início do App
+ * useEffect(() => {
+ *   migrateLocalStorage();
+ * }, []);
+ * ```
+ */
 export const migrateLocalStorage = () => {
   try {
     const isMigrated = localStorage.getItem(MIGRATION_KEY);
     if (isMigrated) return;
 
-    console.log('Iniciando migração para v1 (Estrutura de Dados)...');
-
     // 1. Migrar Leads para Contacts
     const storedLeads = localStorage.getItem('crm_leads');
     const storedContacts = localStorage.getItem('crm_contacts');
-    
+
     let leads: Lead[] = storedLeads ? JSON.parse(storedLeads) : [];
     let contacts: Contact[] = storedContacts ? JSON.parse(storedContacts) : [];
 
@@ -35,13 +69,12 @@ export const migrateLocalStorage = () => {
 
       // Adiciona aos contatos existentes
       contacts = [...contacts, ...newContactsFromLeads];
-      
+
       // Salva contatos atualizados
       localStorage.setItem('crm_contacts', JSON.stringify(contacts));
-      
+
       // Limpa leads antigos (opcional, pode manter por segurança)
       // localStorage.removeItem('crm_leads'); 
-      console.log(`Migrados ${leads.length} leads para contatos.`);
     }
 
     // 2. Garantir Board Padrão
@@ -57,12 +90,10 @@ export const migrateLocalStorage = () => {
         createdAt: new Date().toISOString()
       };
       localStorage.setItem('crm_boards', JSON.stringify([defaultBoard]));
-      console.log('Board padrão criado.');
     }
 
     // Marca migração como concluída
     localStorage.setItem(MIGRATION_KEY, 'true');
-    console.log('Migração v1 concluída com sucesso.');
 
   } catch (error) {
     console.error('Erro na migração v1:', error);

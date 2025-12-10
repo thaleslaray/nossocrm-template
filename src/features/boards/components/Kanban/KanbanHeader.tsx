@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Search, Filter, LayoutGrid, Table as TableIcon, User, Settings, Lightbulb } from 'lucide-react';
+import { Plus, Search, LayoutGrid, Table as TableIcon, User, Settings, Lightbulb } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Board } from '@/types';
 import { BoardSelector } from '../BoardSelector';
@@ -19,8 +19,8 @@ interface KanbanHeaderProps {
     setSearchTerm: (term: string) => void;
     ownerFilter: 'all' | 'mine';
     setOwnerFilter: (filter: 'all' | 'mine') => void;
-    isFilterOpen: boolean;
-    setIsFilterOpen: (isOpen: boolean) => void;
+    statusFilter: 'open' | 'won' | 'lost' | 'all';
+    setStatusFilter: (filter: 'open' | 'won' | 'lost' | 'all') => void;
     onNewDeal: () => void;
 }
 
@@ -34,7 +34,7 @@ export const KanbanHeader: React.FC<KanbanHeaderProps> = ({
     viewMode, setViewMode,
     searchTerm, setSearchTerm,
     ownerFilter, setOwnerFilter,
-    isFilterOpen, setIsFilterOpen,
+    statusFilter, setStatusFilter,
     onNewDeal
 }) => {
     return (
@@ -101,15 +101,19 @@ export const KanbanHeader: React.FC<KanbanHeaderProps> = ({
                 <div className="flex bg-slate-100 dark:bg-white/5 p-1 rounded-lg border border-slate-200 dark:border-white/10">
                     <button
                         onClick={() => setViewMode('kanban')}
+                        aria-label="Visualização em quadro Kanban"
+                        aria-pressed={viewMode === 'kanban'}
                         className={`p-1.5 rounded-md transition-all ${viewMode === 'kanban' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary-600 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
                     >
-                        <LayoutGrid size={16} />
+                        <LayoutGrid size={16} aria-hidden="true" />
                     </button>
                     <button
                         onClick={() => setViewMode('list')}
+                        aria-label="Visualização em lista"
+                        aria-pressed={viewMode === 'list'}
                         className={`p-1.5 rounded-md transition-all ${viewMode === 'list' ? 'bg-white dark:bg-slate-700 shadow-sm text-primary-600 dark:text-white' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400'}`}
                     >
-                        <TableIcon size={16} />
+                        <TableIcon size={16} aria-hidden="true" />
                     </button>
                 </div>
 
@@ -126,11 +130,32 @@ export const KanbanHeader: React.FC<KanbanHeaderProps> = ({
                 </div>
                 <div className="relative">
                     <select
-                        value={ownerFilter}
-                        onChange={(e) => setOwnerFilter(e.target.value as 'all' | 'mine')}
+                        value={statusFilter}
+                        onChange={(e) => setStatusFilter(e.target.value as any)}
+                        aria-label="Filtrar por status"
                         className="pl-3 pr-8 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-white/5 text-sm outline-none focus:ring-2 focus:ring-primary-500 dark:text-white backdrop-blur-sm appearance-none cursor-pointer"
                     >
-                        <option value="all">Todos os Negócios</option>
+                        <option value="open">Em Aberto</option>
+                        <option value="won">Ganhos</option>
+                        <option value="lost">Perdidos</option>
+                        <option value="all">Todos</option>
+                    </select>
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
+                        <div className={`w-2 h-2 rounded-full ${statusFilter === 'open' ? 'bg-blue-500' :
+                            statusFilter === 'won' ? 'bg-green-500' :
+                                statusFilter === 'lost' ? 'bg-red-500' : 'bg-slate-400'
+                            }`} />
+                    </div>
+                </div>
+
+                <div className="relative">
+                    <select
+                        value={ownerFilter}
+                        onChange={(e) => setOwnerFilter(e.target.value as 'all' | 'mine')}
+                        aria-label="Filtrar negócios por proprietário"
+                        className="pl-3 pr-8 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-white/5 text-sm outline-none focus:ring-2 focus:ring-primary-500 dark:text-white backdrop-blur-sm appearance-none cursor-pointer"
+                    >
+                        <option value="all">Todos os Donos</option>
                         <option value="mine">Meus Negócios</option>
                     </select>
                     <User className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" size={14} />
@@ -139,16 +164,10 @@ export const KanbanHeader: React.FC<KanbanHeaderProps> = ({
 
             <div className="flex gap-3">
                 <button
-                    onClick={() => setIsFilterOpen(!isFilterOpen)}
-                    className={`p-2 border rounded-lg transition-colors ${isFilterOpen ? 'bg-primary-50 border-primary-200 text-primary-600' : 'bg-white dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white'}`}
-                >
-                    <Filter size={20} />
-                </button>
-                <button
                     onClick={onNewDeal}
-                    className="bg-primary-600 hover:bg-primary-500 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all shadow-lg shadow-primary-600/20"
+                    className="bg-primary-700 hover:bg-primary-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 transition-all shadow-lg shadow-primary-700/20"
                 >
-                    <Plus size={18} /> Novo Negócio
+                    <Plus size={18} aria-hidden="true" /> Novo Negócio
                 </button>
             </div>
         </div>

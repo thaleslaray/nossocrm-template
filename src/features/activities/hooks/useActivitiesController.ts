@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useToast } from '@/context/ToastContext';
+import { useAuth } from '@/context/AuthContext';
 import { Activity } from '@/types';
 import {
   useActivities,
@@ -8,9 +9,12 @@ import {
   useDeleteActivity,
 } from '@/lib/query/hooks/useActivitiesQuery';
 import { useDeals } from '@/lib/query/hooks/useDealsQuery';
-import { useRealtimeSync } from '@/lib/realtime';
+import { useRealtimeSync } from '@/lib/realtime/useRealtimeSync';
 
 export const useActivitiesController = () => {
+  // Auth for tenant organization_id
+  const { profile, organizationId } = useAuth();
+
   // TanStack Query hooks
   const { data: activities = [], isLoading: activitiesLoading } = useActivities();
   const { data: deals = [], isLoading: dealsLoading } = useDeals();
@@ -44,7 +48,7 @@ export const useActivitiesController = () => {
   const filteredActivities = useMemo(() => {
     return activities
       .filter(activity => {
-        const matchesSearch = activity.title.toLowerCase().includes(searchTerm.toLowerCase());
+        const matchesSearch = (activity.title || '').toLowerCase().includes(searchTerm.toLowerCase());
         const matchesType = filterType === 'ALL' || activity.type === filterType;
         return matchesSearch && matchesType;
       })
@@ -133,14 +137,16 @@ export const useActivitiesController = () => {
     } else {
       createActivityMutation.mutate(
         {
-          title: formData.title,
-          type: formData.type,
-          description: formData.description,
-          date: date.toISOString(),
-          dealId: formData.dealId || '',
-          dealTitle: selectedDeal?.title || '',
-          completed: false,
-          user: { name: 'Eu', avatar: '' },
+          activity: {
+            title: formData.title,
+            type: formData.type,
+            description: formData.description,
+            date: date.toISOString(),
+            dealId: formData.dealId || '',
+            dealTitle: selectedDeal?.title || '',
+            completed: false,
+            user: { name: 'Eu', avatar: '' },
+          },
         },
         {
           onSuccess: () => {

@@ -1,0 +1,352 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { DealsProvider, useDeals, useDealsView } from '@/context/deals/DealsContext';
+import { Deal, Company, Contact } from '@/types';
+import React from 'react';
+
+// Mock localStorage
+const localStorageMock = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: vi.fn((key: string) => store[key] || null),
+    setItem: vi.fn((key: string, value: string) => {
+      store[key] = value;
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete store[key];
+    }),
+    clear: vi.fn(() => {
+      store = {};
+    }),
+  };
+})();
+
+Object.defineProperty(window, 'localStorage', { value: localStorageMock });
+
+const wrapper = ({ children }: { children: React.ReactNode }) => (
+  <DealsProvider>{children}</DealsProvider>
+);
+
+const createTestDeal = (overrides: Partial<Deal> = {}): Deal => ({
+  id: crypto.randomUUID(),
+  title: 'Test Deal',
+  companyId: 'company-1',
+  contactId: 'contact-1',
+  boardId: 'board-1',
+  value: 1000,
+  items: [],
+  status: 'NEW',
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+  probability: 50,
+  priority: 'medium',
+  owner: { name: 'Test User', avatar: '' },
+  tags: [],
+  ...overrides,
+});
+
+describe('DealsContext', () => {
+  beforeEach(() => {
+    localStorageMock.clear();
+    vi.clearAllMocks();
+  });
+
+  describe('Initialization', () => {
+    it('should provide all required context values', () => {
+      const { result } = renderHook(() => useDeals(), { wrapper });
+
+      expect(result.current.rawDeals).toBeDefined();
+      expect(Array.isArray(result.current.rawDeals)).toBe(true);
+      expect(typeof result.current.addDeal).toBe('function');
+      expect(typeof result.current.updateDeal).toBe('function');
+      expect(typeof result.current.updateDealStatus).toBe('function');
+      expect(typeof result.current.deleteDeal).toBe('function');
+      expect(typeof result.current.addItemToDeal).toBe('function');
+      expect(typeof result.current.removeItemFromDeal).toBe('function');
+    });
+
+    it('should throw when used outside provider', () => {
+      expect(() => {
+        renderHook(() => useDeals());
+      }).toThrow('useDeals must be used within a DealsProvider');
+    });
+  });
+
+  describe('CRUD Operations', () => {
+    it('should add a new deal', async () => {
+      const { result } = renderHook(() => useDeals(), { wrapper });
+
+      const newDeal = createTestDeal({ title: 'New Deal' });
+
+      act(() => {
+        result.current.addDeal(newDeal);
+      });
+
+      await waitFor(() => {
+        expect(result.current.rawDeals.some(d => d.id === newDeal.id)).toBe(true);
+      });
+    });
+
+    it('should update deal properties', async () => {
+      const { result } = renderHook(() => useDeals(), { wrapper });
+
+      const deal = createTestDeal({ title: 'Original Title' });
+
+      act(() => {
+        result.current.addDeal(deal);
+      });
+
+      await waitFor(() => {
+        expect(result.current.rawDeals.some(d => d.id === deal.id)).toBe(true);
+      });
+
+      act(() => {
+        result.current.updateDeal(deal.id, { title: 'Updated Title', value: 2000 });
+      });
+
+      await waitFor(() => {
+        const updated = result.current.rawDeals.find(d => d.id === deal.id);
+        expect(updated?.title).toBe('Updated Title');
+        expect(updated?.value).toBe(2000);
+      });
+    });
+
+    it('should update deal status', async () => {
+      const { result } = renderHook(() => useDeals(), { wrapper });
+
+      const deal = createTestDeal({ status: 'NEW' });
+
+      act(() => {
+        result.current.addDeal(deal);
+      });
+
+      await waitFor(() => {
+        expect(result.current.rawDeals.some(d => d.id === deal.id)).toBe(true);
+      });
+
+      act(() => {
+        result.current.updateDealStatus(deal.id, 'CONTACTED');
+      });
+
+      await waitFor(() => {
+        const updated = result.current.rawDeals.find(d => d.id === deal.id);
+        expect(updated?.status).toBe('CONTACTED');
+      });
+    });
+
+    it('should update deal status with loss reason', async () => {
+      const { result } = renderHook(() => useDeals(), { wrapper });
+
+      const deal = createTestDeal({ status: 'NEGOTIATION' });
+
+      act(() => {
+        result.current.addDeal(deal);
+      });
+
+      await waitFor(() => {
+        expect(result.current.rawDeals.some(d => d.id === deal.id)).toBe(true);
+      });
+
+      act(() => {
+        result.current.updateDealStatus(deal.id, 'CLOSED_LOST', 'Preço alto');
+      });
+
+      await waitFor(() => {
+        const updated = result.current.rawDeals.find(d => d.id === deal.id);
+        expect(updated?.status).toBe('CLOSED_LOST');
+        expect(updated?.lossReason).toBe('Preço alto');
+      });
+    });
+
+    it('should delete deal', async () => {
+      const { result } = renderHook(() => useDeals(), { wrapper });
+
+      const deal = createTestDeal();
+
+      act(() => {
+        result.current.addDeal(deal);
+      });
+
+      await waitFor(() => {
+        expect(result.current.rawDeals.some(d => d.id === deal.id)).toBe(true);
+      });
+
+      act(() => {
+        result.current.deleteDeal(deal.id);
+      });
+
+      await waitFor(() => {
+        expect(result.current.rawDeals.some(d => d.id === deal.id)).toBe(false);
+      });
+    });
+  });
+
+  describe('Deal Items', () => {
+    it('should add item to deal', async () => {
+      const { result } = renderHook(() => useDeals(), { wrapper });
+
+      const deal = createTestDeal({ items: [] });
+
+      act(() => {
+        result.current.addDeal(deal);
+      });
+
+      await waitFor(() => {
+        expect(result.current.rawDeals.some(d => d.id === deal.id)).toBe(true);
+      });
+
+      act(() => {
+        result.current.addItemToDeal(deal.id, {
+          productId: 'product-1',
+          name: 'Product 1',
+          quantity: 2,
+          price: 500,
+        });
+      });
+
+      await waitFor(() => {
+        const updated = result.current.rawDeals.find(d => d.id === deal.id);
+        expect(updated?.items.length).toBe(1);
+        expect(updated?.items[0].name).toBe('Product 1');
+      });
+    });
+
+    it('should remove item from deal', async () => {
+      const { result } = renderHook(() => useDeals(), { wrapper });
+
+      const itemId = 'item-1';
+      const deal = createTestDeal({
+        items: [{ id: itemId, productId: 'p1', name: 'Item 1', quantity: 1, price: 100 }],
+      });
+
+      act(() => {
+        result.current.addDeal(deal);
+      });
+
+      await waitFor(() => {
+        const added = result.current.rawDeals.find(d => d.id === deal.id);
+        expect(added?.items.length).toBe(1);
+      });
+
+      act(() => {
+        result.current.removeItemFromDeal(deal.id, itemId);
+      });
+
+      await waitFor(() => {
+        const updated = result.current.rawDeals.find(d => d.id === deal.id);
+        expect(updated?.items.length).toBe(0);
+      });
+    });
+  });
+
+  describe('setRawDeals', () => {
+    it('should replace all deals', async () => {
+      const { result } = renderHook(() => useDeals(), { wrapper });
+
+      const newDeals = [
+        createTestDeal({ id: 'deal-1', title: 'Deal 1' }),
+        createTestDeal({ id: 'deal-2', title: 'Deal 2' }),
+      ];
+
+      act(() => {
+        result.current.setRawDeals(newDeals);
+      });
+
+      await waitFor(() => {
+        expect(result.current.rawDeals.length).toBe(2);
+        expect(result.current.rawDeals.some(d => d.id === 'deal-1')).toBe(true);
+        expect(result.current.rawDeals.some(d => d.id === 'deal-2')).toBe(true);
+      });
+    });
+  });
+});
+
+describe('useDealsView', () => {
+  const companyMap: Record<string, Company> = {
+    'company-1': { id: 'company-1', name: 'Acme Corp', createdAt: new Date().toISOString() },
+    'company-2': { id: 'company-2', name: 'Tech Inc', createdAt: new Date().toISOString() },
+  };
+
+  const contactMap: Record<string, Contact> = {
+    'contact-1': {
+      id: 'contact-1',
+      companyId: 'company-1',
+      name: 'John Doe',
+      email: 'john@acme.com',
+      phone: '',
+      status: 'ACTIVE',
+      stage: 'LEAD',
+      createdAt: new Date().toISOString(),
+    },
+  };
+
+  beforeEach(() => {
+    localStorageMock.clear();
+    vi.clearAllMocks();
+  });
+
+  it('should denormalize deals with company and contact names', async () => {
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <DealsProvider>{children}</DealsProvider>
+    );
+
+    const { result } = renderHook(
+      () => {
+        const deals = useDeals();
+        const dealsView = useDealsView(companyMap, contactMap);
+        return { deals, dealsView };
+      },
+      { wrapper }
+    );
+
+    // Add a deal
+    act(() => {
+      result.current.deals.addDeal(
+        createTestDeal({
+          id: 'deal-with-company',
+          companyId: 'company-1',
+          contactId: 'contact-1',
+        })
+      );
+    });
+
+    await waitFor(() => {
+      const dealView = result.current.dealsView.find(d => d.id === 'deal-with-company');
+      expect(dealView?.companyName).toBe('Acme Corp');
+      expect(dealView?.contactName).toBe('John Doe');
+      expect(dealView?.contactEmail).toBe('john@acme.com');
+    });
+  });
+
+  it('should use fallback names for unknown company/contact', async () => {
+    const wrapper = ({ children }: { children: React.ReactNode }) => (
+      <DealsProvider>{children}</DealsProvider>
+    );
+
+    const { result } = renderHook(
+      () => {
+        const deals = useDeals();
+        const dealsView = useDealsView({}, {}); // Empty maps
+        return { deals, dealsView };
+      },
+      { wrapper }
+    );
+
+    act(() => {
+      result.current.deals.addDeal(
+        createTestDeal({
+          id: 'deal-unknown',
+          companyId: 'unknown-company',
+          contactId: 'unknown-contact',
+        })
+      );
+    });
+
+    await waitFor(() => {
+      const dealView = result.current.dealsView.find(d => d.id === 'deal-unknown');
+      expect(dealView?.companyName).toBe('Empresa Desconhecida');
+      expect(dealView?.contactName).toBe('Sem Contato');
+      expect(dealView?.contactEmail).toBe('');
+    });
+  });
+});

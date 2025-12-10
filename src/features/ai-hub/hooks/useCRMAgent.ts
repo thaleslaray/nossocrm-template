@@ -65,8 +65,8 @@ export function useCRMAgent(options: UseCRMAgentOptions = {}) {
       if (query) {
         const q = query.toLowerCase();
         filtered = filtered.filter(d => 
-          d.title.toLowerCase().includes(q) ||
-          d.companyName?.toLowerCase().includes(q)
+          (d.title || '').toLowerCase().includes(q) ||
+          (d.companyName || '').toLowerCase().includes(q)
         );
       }
       if (status) {
@@ -98,8 +98,8 @@ export function useCRMAgent(options: UseCRMAgentOptions = {}) {
     getContact: async ({ query }: { query: string }) => {
       const q = query.toLowerCase();
       const found = contacts.find(c =>
-        c.name.toLowerCase().includes(q) ||
-        c.email?.toLowerCase().includes(q)
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.email || '').toLowerCase().includes(q)
       );
 
       if (!found) {
@@ -299,7 +299,7 @@ export function useCRMAgent(options: UseCRMAgentOptions = {}) {
 
       if (contactName) {
         const found = contacts.find(c => 
-          c.name.toLowerCase().includes(contactName.toLowerCase())
+          (c.name || '').toLowerCase().includes(contactName.toLowerCase())
         );
         if (found) {
           contactId = found.id;

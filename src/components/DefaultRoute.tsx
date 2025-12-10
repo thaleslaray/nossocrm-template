@@ -3,10 +3,10 @@ import { Navigate } from 'react-router-dom';
 import { usePersistedState } from '@/hooks/usePersistedState';
 
 export const DefaultRoute: React.FC = () => {
-    // Default to /dashboard if not set
-    const [defaultRoute] = usePersistedState<string>('crm_default_route', '/dashboard');
+    // Default to /boards if not set
+    const [defaultRoute] = usePersistedState<string>('crm_default_route', '/boards');
 
-    let target = defaultRoute === '/' ? '/dashboard' : defaultRoute;
+    let target = defaultRoute === '/' ? '/boards' : defaultRoute;
 
     // Handle specific Inbox modes
     if (target === '/inbox-list') {

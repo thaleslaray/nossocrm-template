@@ -43,3 +43,4 @@ tmp/
 # Misc dev files
 *.local
 vercel_logs.txt
+.secrets.local

@@ -1,8 +1,34 @@
+/**
+ * @fileoverview Hook de Lógica de Boards/Pipelines (Modo Offline)
+ * 
+ * Hook legado que gerencia boards kanban usando localStorage como fallback
+ * quando a conexão com Supabase não está disponível.
+ * 
+ * @module hooks/useBoardsLogic
+ * @deprecated Preferir usar useBoards de @/context/boards para produção
+ * 
+ * @remarks
+ * Inclui lógica de migração automática para atualizar estrutura
+ * de boards legados que usavam `linkedStage` ao invés de
+ * `linkedLifecycleStage` nos estágios.
+ * 
+ * @example
+ * ```tsx
+ * // Para uso offline/demo apenas
+ * const { 
+ *   boards, 
+ *   addBoard, 
+ *   getDefaultBoard 
+ * } = useBoardsLogic();
+ * ```
+ */
+
 import { Board, DEFAULT_BOARD_STAGES, ContactStage } from '../types';
 import { INITIAL_BOARDS } from '../services/mockData';
 import { usePersistedState } from './usePersistedState';
 import { useEffect } from 'react';
 
+/** Board padrão de vendas criado automaticamente */
 const DEFAULT_SALES_BOARD: Board = {
   id: 'default-sales',
   name: 'Pipeline de Vendas',
@@ -17,6 +43,21 @@ const DEFAULT_SALES_BOARD: Board = {
   createdAt: new Date().toISOString(),
 };
 
+/**
+ * Hook para gerenciamento de boards em localStorage
+ * 
+ * Fornece CRUD de boards kanban com persistência local para modo offline.
+ * Em produção, usar o contexto de boards que sincroniza com Supabase.
+ * 
+ * @returns {Object} Estado e operações de boards
+ * @returns {Board[]} return.boards - Lista de boards
+ * @returns {React.Dispatch} return.setBoards - Setter direto do estado
+ * @returns {(board: Omit<Board, 'id' | 'createdAt'>) => Board} return.addBoard - Cria board
+ * @returns {(id: string, updates: Partial<Board>) => void} return.updateBoard - Atualiza board
+ * @returns {(id: string) => void} return.deleteBoard - Remove board (exceto default)
+ * @returns {() => Board | undefined} return.getDefaultBoard - Retorna board padrão
+ * @returns {(id: string) => Board | undefined} return.getBoardById - Busca board por ID
+ */
 export const useBoardsLogic = () => {
   const [boards, setBoards] = usePersistedState<Board[]>('crm_boards', INITIAL_BOARDS);
 
@@ -36,7 +77,6 @@ export const useBoardsLogic = () => {
       const isMissingLinkedStage = wonStage && !wonStage.linkedLifecycleStage;
 
       if (hasLegacyProp || isMissingLinkedStage) {
-        console.log('Migrating Default Board to new Linked Stages logic...');
         const updatedBoards = [...prevBoards];
 
         // Remove legacy prop and update stages
@@ -55,7 +95,6 @@ export const useBoardsLogic = () => {
   }, []);
 
   const addBoard = (board: Omit<Board, 'id' | 'createdAt'>) => {
-    console.log('Adding new board with data:', board); // Debug log
     const newBoard: Board = {
       ...board,
       id: crypto.randomUUID(),

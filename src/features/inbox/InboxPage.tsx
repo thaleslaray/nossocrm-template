@@ -22,6 +22,7 @@ export const InboxPage: React.FC = () => {
     // Focus Mode
     focusQueue,
     focusIndex,
+    setFocusIndex,
     currentFocusItem,
     handleFocusNext,
     handleFocusPrev,
@@ -71,6 +72,13 @@ export const InboxPage: React.FC = () => {
           onAcceptSuggestion={handleAcceptSuggestion}
           onDismissSuggestion={handleDismissSuggestion}
           onSnoozeSuggestion={handleSnoozeSuggestion}
+          onSelectActivity={(id) => {
+            const index = focusQueue.findIndex(item => item.id === id);
+            if (index !== -1) {
+              setFocusIndex(index);
+              setViewMode('focus');
+            }
+          }}
         />
       ) : (
         <InboxFocusView

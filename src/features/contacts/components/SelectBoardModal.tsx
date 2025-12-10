@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { X, LayoutGrid } from 'lucide-react';
 import { Board } from '@/types';
+import { FocusTrap, useFocusReturn } from '@/lib/a11y';
 
 interface SelectBoardModalProps {
   isOpen: boolean;
@@ -17,28 +18,40 @@ export const SelectBoardModal: React.FC<SelectBoardModalProps> = ({
   boards,
   contactName,
 }) => {
+  const headingId = useId();
+  const descriptionId = useId();
+  useFocusReturn({ enabled: isOpen });
+  
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-white/10">
-          <div>
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-              Criar Deal
-            </h2>
-            <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-              Selecione o board para <strong>{contactName}</strong>
-            </p>
+    <FocusTrap active={isOpen} onEscape={onClose}>
+      <div 
+        className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+        aria-describedby={descriptionId}
+      >
+        <div className="bg-white dark:bg-dark-card rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-white/10">
+            <div>
+              <h2 id={headingId} className="text-xl font-bold text-slate-900 dark:text-white">
+                Criar Deal
+              </h2>
+              <p id={descriptionId} className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                Selecione o board para <strong>{contactName}</strong>
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              aria-label="Fechar modal"
+              className="p-2 hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg transition-colors focus-visible-ring"
+            >
+              <X size={20} className="text-slate-500" aria-hidden="true" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg transition-colors"
-          >
-            <X size={20} className="text-slate-500" />
-          </button>
-        </div>
 
         {/* Board List */}
         <div className="p-4 max-h-80 overflow-y-auto">
@@ -76,7 +89,8 @@ export const SelectBoardModal: React.FC<SelectBoardModalProps> = ({
             O deal será criado no primeiro estágio do board selecionado
           </p>
         </div>
+        </div>
       </div>
-    </div>
+    </FocusTrap>
   );
 };

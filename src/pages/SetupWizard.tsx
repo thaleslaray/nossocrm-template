@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getErrorMessage } from '@/utils/errorUtils';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/context/AuthContext';
@@ -26,17 +27,17 @@ const SetupWizard: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        
+
         if (!isPasswordValid) {
             setError('A senha não atende aos requisitos mínimos');
             return;
         }
-        
+
         if (!passwordsMatch) {
             setError('As senhas não coincidem');
             return;
         }
-        
+
         setLoading(true);
         setError(null);
 
@@ -59,9 +60,11 @@ const SetupWizard: React.FC = () => {
 
             await checkInitialization();
             navigate('/');
-        } catch (err: any) {
+            await checkInitialization();
+            navigate('/');
+        } catch (err) {
             console.error('Setup error:', err);
-            setError(err.message || 'Falha ao configurar a instância');
+            setError(getErrorMessage(err));
         } finally {
             setLoading(false);
         }
@@ -100,6 +103,7 @@ const SetupWizard: React.FC = () => {
                                     name="company"
                                     type="text"
                                     required
+                                    aria-required="true"
                                     className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all sm:text-sm"
                                     placeholder="Ex: Acme Corp"
                                     value={companyName}
@@ -122,6 +126,7 @@ const SetupWizard: React.FC = () => {
                                     type="email"
                                     autoComplete="email"
                                     required
+                                    aria-required="true"
                                     className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all sm:text-sm"
                                     placeholder="admin@empresa.com"
                                     value={email}
@@ -144,6 +149,8 @@ const SetupWizard: React.FC = () => {
                                     type="password"
                                     autoComplete="new-password"
                                     required
+                                    aria-required="true"
+                                    aria-describedby="password-requirements"
                                     className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all sm:text-sm"
                                     placeholder="••••••••"
                                     value={password}
@@ -152,7 +159,7 @@ const SetupWizard: React.FC = () => {
                             </div>
                             {/* Password Requirements */}
                             {password.length > 0 && (
-                                <div className="mt-2 space-y-1">
+                                <div id="password-requirements" className="mt-2 space-y-1">
                                     <p className="text-xs text-slate-500 dark:text-slate-400">Requisitos:</p>
                                     <div className="grid grid-cols-2 gap-1 text-xs">
                                         <span className={passwordRequirements.minLength ? 'text-green-500' : 'text-slate-400'}>
@@ -186,13 +193,14 @@ const SetupWizard: React.FC = () => {
                                     type="password"
                                     autoComplete="new-password"
                                     required
-                                    className={`block w-full pl-10 pr-3 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all sm:text-sm ${
-                                        confirmPassword.length > 0 
-                                            ? passwordsMatch 
-                                                ? 'border-green-500 focus:border-green-500' 
-                                                : 'border-red-500 focus:border-red-500'
-                                            : 'border-slate-300 dark:border-slate-700 focus:border-primary-500'
-                                    }`}
+                                    aria-required="true"
+                                    aria-invalid={confirmPassword.length > 0 && !passwordsMatch ? 'true' : undefined}
+                                    className={`block w-full pl-10 pr-3 py-2.5 border rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all sm:text-sm ${confirmPassword.length > 0
+                                        ? passwordsMatch
+                                            ? 'border-green-500 focus:border-green-500'
+                                            : 'border-red-500 focus:border-red-500'
+                                        : 'border-slate-300 dark:border-slate-700 focus:border-primary-500'
+                                        }`}
                                     placeholder="••••••••"
                                     value={confirmPassword}
                                     onChange={(e) => setConfirmPassword(e.target.value)}
@@ -207,7 +215,11 @@ const SetupWizard: React.FC = () => {
                         </div>
 
                         {error && (
-                            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400 text-sm text-center">
+                            <div
+                                role="alert"
+                                aria-live="assertive"
+                                className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400 text-sm text-center"
+                            >
                                 {error}
                             </div>
                         )}

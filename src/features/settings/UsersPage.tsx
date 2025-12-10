@@ -9,7 +9,7 @@ interface Profile {
     id: string;
     email: string;
     role: string;
-    company_id: string;
+    organization_id: string;
     created_at: string;
     status: 'active' | 'pending';
     invited_at?: string;
@@ -86,10 +86,10 @@ export const UsersPage: React.FC = () => {
             // Fetch invites that are either not expired OR have null expiration (never expires)
             // Supabase query for "expires_at > now OR expires_at is null" is tricky with simple syntax
             // So we fetch all and filter in memory or use a raw query if needed.
-            // For simplicity, let's just fetch all for this company and filter client side or use 'or' syntax
+            // For simplicity, let's just fetch all for this organization and filter client side or use 'or' syntax
 
             const { data } = await supabase
-                .from('company_invites')
+                .from('organization_invites')
                 .select('*')
                 .order('created_at', { ascending: false });
 
@@ -135,9 +135,9 @@ export const UsersPage: React.FC = () => {
                 : null;
 
             const { error } = await supabase
-                .from('company_invites')
+                .from('organization_invites')
                 .insert({
-                    company_id: currentUserProfile?.company_id,
+                    organization_id: currentUserProfile?.organization_id,
                     role: newUserRole,
                     expires_at: expiresAt,
                 });
@@ -156,7 +156,7 @@ export const UsersPage: React.FC = () => {
     const handleDeleteInvite = async (id: string) => {
         try {
             const { error } = await supabase
-                .from('company_invites')
+                .from('organization_invites')
                 .delete()
                 .eq('id', id);
 

@@ -5,9 +5,25 @@
  * - Standardized error codes for i18n
  * - Reusable field validators
  * - Type inference
+ * - T033: Max length limits for security
  */
 import { z } from 'zod';
 import { ERROR_CODES, getErrorMessage } from './errorCodes';
+
+// ============ MAX LENGTH CONSTANTS (T033) ============
+
+const MAX_LENGTHS = {
+  NAME: 200,
+  EMAIL: 254, // RFC 5321
+  PHONE: 30,
+  TITLE: 200,
+  COMPANY_NAME: 200,
+  DESCRIPTION: 5000,
+  NOTES: 10000,
+  URL: 2000,
+  SHORT_TEXT: 100,
+  MEDIUM_TEXT: 500,
+} as const;
 
 // ============ HELPER FOR ERROR MESSAGES ============
 
@@ -19,6 +35,7 @@ const msg = (code: keyof typeof ERROR_CODES, params?: Record<string, string | nu
 export const emailSchema = z
   .string({ message: msg('EMAIL_REQUIRED') })
   .min(1, msg('EMAIL_REQUIRED'))
+  .max(MAX_LENGTHS.EMAIL, `Email deve ter no máximo ${MAX_LENGTHS.EMAIL} caracteres`)
   .email(msg('EMAIL_INVALID'));
 
 export const phoneSchema = z
@@ -26,39 +43,54 @@ export const phoneSchema = z
   .optional()
   .transform(val => val || '')
   .pipe(
-    z.string().refine(val => val === '' || /^[\d\s\-\(\)\+]+$/.test(val), msg('PHONE_INVALID'))
+    z.string()
+      .max(MAX_LENGTHS.PHONE, `Telefone deve ter no máximo ${MAX_LENGTHS.PHONE} caracteres`)
+      .refine(val => val === '' || /^[\d\s\-\(\)\+]+$/.test(val), msg('PHONE_INVALID'))
   );
 
-export const requiredString = (field: string) =>
-  z.string({ message: msg('FIELD_REQUIRED', { field }) }).min(1, msg('FIELD_REQUIRED', { field }));
+export const requiredString = (field: string, maxLength: number = MAX_LENGTHS.NAME) =>
+  z.string({ message: msg('FIELD_REQUIRED', { field }) })
+    .min(1, msg('FIELD_REQUIRED', { field }))
+    .max(maxLength, `${field} deve ter no máximo ${maxLength} caracteres`);
 
 export const optionalString = z
   .string()
+  .max(MAX_LENGTHS.MEDIUM_TEXT, `Texto deve ter no máximo ${MAX_LENGTHS.MEDIUM_TEXT} caracteres`)
+  .optional()
+  .transform(val => val || '');
+
+export const optionalLongString = z
+  .string()
+  .max(MAX_LENGTHS.DESCRIPTION, `Texto deve ter no máximo ${MAX_LENGTHS.DESCRIPTION} caracteres`)
   .optional()
   .transform(val => val || '');
 
 export const currencySchema = z.coerce
   .number({ message: msg('NUMBER_REQUIRED', { field: 'Valor' }) })
   .min(0, msg('NUMBER_MUST_BE_POSITIVE', { field: 'Valor' }))
+  .max(999999999999, 'Valor máximo excedido') // Max ~1 trillion
   .optional()
   .transform(val => val ?? 0);
 
 export const requiredSelect = (field: string) =>
   z
     .string({ message: msg('SELECTION_REQUIRED', { field }) })
-    .min(1, msg('SELECTION_REQUIRED', { field }));
+    .min(1, msg('SELECTION_REQUIRED', { field }))
+    .max(100, 'Seleção inválida');
 
 export const requiredDate = (field: string) =>
-  z.string({ message: msg('DATE_REQUIRED', { field }) }).min(1, msg('DATE_REQUIRED', { field }));
+  z.string({ message: msg('DATE_REQUIRED', { field }) })
+    .min(1, msg('DATE_REQUIRED', { field }))
+    .max(30, 'Data inválida');
 
 // ============ CONTACT SCHEMAS ============
 
 export const contactFormSchema = z.object({
-  name: requiredString('Nome'),
+  name: requiredString('Nome', MAX_LENGTHS.NAME),
   email: emailSchema,
   phone: phoneSchema,
-  role: optionalString,
-  companyName: optionalString,
+  role: optionalString.pipe(z.string().max(MAX_LENGTHS.SHORT_TEXT)),
+  companyName: optionalString.pipe(z.string().max(MAX_LENGTHS.COMPANY_NAME)),
 });
 
 export type ContactFormData = z.infer<typeof contactFormSchema>;
@@ -66,11 +98,15 @@ export type ContactFormData = z.infer<typeof contactFormSchema>;
 // ============ DEAL SCHEMAS ============
 
 export const dealFormSchema = z.object({
-  title: requiredString('Nome do negócio'),
-  companyName: requiredString('Empresa'),
+  title: requiredString('Nome do negócio', MAX_LENGTHS.TITLE),
+  companyName: requiredString('Empresa', MAX_LENGTHS.COMPANY_NAME),
   value: currencySchema,
-  contactName: optionalString,
-  email: z.string().email(msg('EMAIL_INVALID')).optional().or(z.literal('')),
+  contactName: optionalString.pipe(z.string().max(MAX_LENGTHS.NAME)),
+  email: z.string()
+    .max(MAX_LENGTHS.EMAIL, `Email deve ter no máximo ${MAX_LENGTHS.EMAIL} caracteres`)
+    .email(msg('EMAIL_INVALID'))
+    .optional()
+    .or(z.literal('')),
   phone: phoneSchema,
 });
 
@@ -92,11 +128,11 @@ export const activityFormTypeSchema = z.enum(['CALL', 'MEETING', 'EMAIL', 'TASK'
 });
 
 export const activityFormSchema = z.object({
-  title: requiredString('Título'),
+  title: requiredString('Título', MAX_LENGTHS.TITLE),
   type: activityFormTypeSchema,
   date: requiredDate('Data'),
-  time: requiredString('Hora'),
-  description: optionalString,
+  time: requiredString('Hora', 10),
+  description: optionalLongString,
   dealId: requiredSelect('Negócio'),
 });
 
@@ -105,8 +141,8 @@ export type ActivityFormData = z.infer<typeof activityFormSchema>;
 // ============ BOARD SCHEMAS ============
 
 export const boardFormSchema = z.object({
-  name: requiredString('Nome do board'),
-  description: optionalString,
+  name: requiredString('Nome do board', MAX_LENGTHS.NAME),
+  description: optionalLongString,
 });
 
 export type BoardFormData = z.infer<typeof boardFormSchema>;
@@ -114,8 +150,8 @@ export type BoardFormData = z.infer<typeof boardFormSchema>;
 // ============ SETTINGS SCHEMAS ============
 
 export const lifecycleStageSchema = z.object({
-  name: requiredString('Nome do estágio'),
-  color: requiredString('Cor'),
+  name: requiredString('Nome do estágio', MAX_LENGTHS.SHORT_TEXT),
+  color: requiredString('Cor', 20),
 });
 
 export type LifecycleStageFormData = z.infer<typeof lifecycleStageSchema>;
@@ -126,11 +162,14 @@ export const aiConfigSchema = z.object({
   provider: z.enum(['gemini', 'openai', 'anthropic'], {
     message: msg('SELECTION_INVALID'),
   }),
-  apiKey: z.string().optional(),
-  model: z.string().optional(),
+  apiKey: z.string().max(200, 'API Key inválida').optional(),
+  model: z.string().max(100, 'Modelo inválido').optional(),
 });
 
 export type AIConfigFormData = z.infer<typeof aiConfigSchema>;
+
+// Export max lengths for use in forms
+export { MAX_LENGTHS };
 
 // Re-export error utilities
 export { ERROR_CODES, getErrorMessage, setLocale, getLocale } from './errorCodes';

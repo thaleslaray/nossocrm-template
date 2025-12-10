@@ -1,13 +1,32 @@
 /**
- * Zustand Store for FlowCRM
- *
- * Optimized global state management to reduce unnecessary re-renders
- *
- * Benefits over Context API:
- * - Selective subscriptions (components only re-render when their slice changes)
- * - No provider nesting required
- * - Built-in devtools support
- * - Simpler async actions
+ * @fileoverview Stores Zustand para Estado Global
+ * 
+ * Sistema de gerenciamento de estado otimizado usando Zustand.
+ * Separado em múltiplos stores especializados para re-renders seletivos.
+ * 
+ * @module stores
+ * 
+ * Benefícios sobre Context API:
+ * - Subscrições seletivas (componentes re-renderizam apenas quando seu slice muda)
+ * - Sem necessidade de aninhamento de providers
+ * - Suporte nativo a devtools
+ * - Actions assíncronos mais simples
+ * 
+ * Stores disponíveis:
+ * - {@link useUIStore} - Estado de UI (sidebar, modais, busca)
+ * - {@link useFormStore} - Drafts e submissão de formulários
+ * - {@link useNotificationStore} - Sistema de notificações
+ * 
+ * @example
+ * ```tsx
+ * import { useSidebarOpen, useUIStore } from '@/stores';
+ * 
+ * // Seletor fino - só re-renderiza quando sidebar muda
+ * const sidebarOpen = useSidebarOpen();
+ * 
+ * // Acesso a actions
+ * const { toggleSidebar, openModal } = useUIStore();
+ * ```
  */
 import { create } from 'zustand';
 import { devtools, persist, subscribeWithSelector } from 'zustand/middleware';
@@ -15,8 +34,18 @@ import { immer } from 'zustand/middleware/immer';
 import type { Deal, Contact, Company, Activity, Board } from '@/types';
 
 // ============ UI STATE STORE ============
-// For ephemeral UI state that doesn't need persistence
 
+/**
+ * Estado de interface do usuário
+ * 
+ * @interface UIState
+ * @property {boolean} sidebarOpen - Se a sidebar está aberta
+ * @property {boolean} aiAssistantOpen - Se o assistente de IA está aberto
+ * @property {string | null} activeModal - ID do modal ativo
+ * @property {Record<string, unknown>} modalData - Dados passados ao modal
+ * @property {string} globalSearchQuery - Query de busca global
+ * @property {Record<string, boolean>} loadingStates - Estados de loading por chave
+ */
 interface UIState {
   // Sidebar
   sidebarOpen: boolean;
@@ -43,6 +72,21 @@ interface UIState {
   isLoading: (key: string) => boolean;
 }
 
+/**
+ * Store de estado de UI
+ * 
+ * Gerencia estado efêmero de interface como sidebar, modais e busca.
+ * Não persiste entre sessões.
+ * 
+ * @example
+ * ```tsx
+ * // Usando diretamente
+ * const { sidebarOpen, toggleSidebar } = useUIStore();
+ * 
+ * // Ou com seletores para performance
+ * const sidebarOpen = useUIStore(state => state.sidebarOpen);
+ * ```
+ */
 export const useUIStore = create<UIState>()(
   devtools(
     subscribeWithSelector((set, get) => ({
@@ -78,27 +122,60 @@ export const useUIStore = create<UIState>()(
 );
 
 // ============ FORM STATE STORE ============
-// For form drafts and validation states
 
+/**
+ * Rascunho de formulário salvo
+ * 
+ * @interface FormDraft
+ * @property {Record<string, unknown>} data - Dados do formulário
+ * @property {number} savedAt - Timestamp do último salvamento
+ */
 interface FormDraft {
   data: Record<string, unknown>;
   savedAt: number;
 }
 
+/**
+ * Estado de formulários
+ * 
+ * @interface FormState
+ */
 interface FormState {
-  // Form drafts (auto-save)
+  /** Rascunhos salvos por formId */
   drafts: Record<string, FormDraft>;
+  /** Salva rascunho de formulário */
   saveDraft: (formId: string, data: Record<string, unknown>) => void;
+  /** Recupera rascunho existente */
   getDraft: (formId: string) => FormDraft | null;
+  /** Limpa rascunho específico */
   clearDraft: (formId: string) => void;
+  /** Limpa todos os rascunhos */
   clearAllDrafts: () => void;
-
-  // Form submission tracking
+  /** Status de submissão por formulário */
   submitting: Record<string, boolean>;
+  /** Define status de submissão */
   setSubmitting: (formId: string, submitting: boolean) => void;
+  /** Verifica se está submetendo */
   isSubmitting: (formId: string) => boolean;
 }
 
+/**
+ * Store de formulários com persistência
+ * 
+ * Gerencia rascunhos de formulários e estados de submissão.
+ * Rascunhos são persistidos em localStorage para recuperação.
+ * 
+ * @example
+ * ```tsx
+ * const { saveDraft, getDraft, isSubmitting } = useFormStore();
+ * 
+ * // Auto-save em onChange
+ * const handleChange = (data) => {
+ *   setFormData(data);
+ *   saveDraft('deal-form', data);
+ * };
+ * ```
+ */
 export const useFormStore = create<FormState>()(
   devtools(
     persist(
@@ -139,6 +216,17 @@ export const useFormStore = create<FormState>()(
 
 // ============ NOTIFICATIONS STORE ============
 
+/**
+ * Notificação do sistema
+ * 
+ * @interface Notification
+ * @property {string} id - UUID único da notificação
+ * @property {'success' | 'error' | 'warning' | 'info'} type - Tipo visual
+ * @property {string} title - Título da notificação
+ * @property {string} [message] - Mensagem detalhada opcional
+ * @property {number} [duration] - Duração em ms (0 = persistente)
+ * @property {Object} [action] - Ação clicável opcional
+ */
 export interface Notification {
   id: string;
   type: 'success' | 'error' | 'warning' | 'info';
@@ -151,13 +239,38 @@ export interface Notification {
   };
 }
 
+/**
+ * Estado de notificações
+ * @interface NotificationState
+ */
 interface NotificationState {
+  /** Lista de notificações ativas */
   notifications: Notification[];
+  /** Adiciona notificação e retorna seu ID */
   addNotification: (notification: Omit<Notification, 'id'>) => string;
+  /** Remove notificação por ID */
   removeNotification: (id: string) => void;
+  /** Limpa todas as notificações */
   clearAll: () => void;
 }
 
+/**
+ * Store de notificações com auto-dismiss
+ * 
+ * Gerencia notificações toast com remoção automática após duração.
+ * 
+ * @example
+ * ```tsx
+ * const { addNotification } = useNotificationStore();
+ * 
+ * addNotification({
+ *   type: 'success',
+ *   title: 'Salvo!',
+ *   message: 'Deal atualizado com sucesso',
+ *   duration: 3000
+ * });
+ * ```
+ */
 export const useNotificationStore = create<NotificationState>()(
   devtools(
     (set, get) => ({
@@ -192,27 +305,50 @@ export const useNotificationStore = create<NotificationState>()(
 );
 
 // ============ SELECTOR HOOKS ============
-// Fine-grained selectors for optimal re-render performance
+// Seletores de granulação fina para performance ótima de re-render
 
-// UI selectors
+/** @returns {boolean} Se a sidebar está aberta */
 export const useSidebarOpen = () => useUIStore(state => state.sidebarOpen);
+/** @returns {boolean} Se o assistente de IA está aberto */
 export const useAIAssistantOpen = () => useUIStore(state => state.aiAssistantOpen);
+/** @returns {string | null} ID do modal ativo */
 export const useActiveModal = () => useUIStore(state => state.activeModal);
+/** @returns {Record<string, unknown>} Dados do modal ativo */
 export const useModalData = () => useUIStore(state => state.modalData);
+/** @returns {string} Query de busca global */
 export const useGlobalSearch = () => useUIStore(state => state.globalSearchQuery);
 
-// Form selectors
+/** @returns {FormDraft | null} Rascunho do formulário especificado */
 export const useFormDraft = (formId: string) => useFormStore(state => state.drafts[formId] ?? null);
+/** @returns {boolean} Se o formulário está sendo submetido */
 export const useIsFormSubmitting = (formId: string) =>
   useFormStore(state => state.submitting[formId] ?? false);
 
-// Notification selectors
+/** @returns {Notification[]} Lista de notificações ativas */
 export const useNotifications = () => useNotificationStore(state => state.notifications);
 
 // ============ HELPER HOOKS ============
 
 /**
- * Hook to auto-save form drafts
+ * Hook para auto-save de rascunhos de formulário
+ * 
+ * Salva automaticamente os dados do formulário após período de debounce.
+ * 
+ * @param {string} formId - Identificador único do formulário
+ * @param {Record<string, unknown>} data - Dados atuais do formulário
+ * @param {number} [debounceMs=1000] - Delay em ms antes de salvar
+ * 
+ * @example
+ * ```tsx
+ * function DealForm() {
+ *   const [formData, setFormData] = useState({});
+ *   
+ *   // Salva automaticamente após 1s sem alterações
+ *   useFormDraftAutoSave('deal-form', formData);
+ *   
+ *   return <form>...</form>;
+ * }
+ * ```
  */
 export const useFormDraftAutoSave = (
   formId: string,

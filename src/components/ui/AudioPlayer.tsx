@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Pause } from 'lucide-react';
 
 interface AudioPlayerProps {
@@ -6,6 +6,14 @@ interface AudioPlayerProps {
     variant?: 'sent' | 'received' | 'preview';
 }
 
+/**
+ * AudioPlayer - Accessible audio player with waveform visualization
+ * 
+ * Accessibility Features:
+ * - Play/Pause button has proper aria-label
+ * - Waveform progress bar is keyboard accessible
+ * - Current time and duration announced via aria-valuenow/aria-valuemax
+ */
 const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, variant = 'received' }) => {
     const audioRef = useRef<HTMLAudioElement>(null);
     const [isPlaying, setIsPlaying] = useState(false);
@@ -66,6 +74,31 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, variant = 'received' }) 
         return `${minutes}:${seconds.toString().padStart(2, '0')}`;
     };
 
+    const seekTo = useCallback((percentage: number) => {
+        if (audioRef.current && audioRef.current.duration) {
+            audioRef.current.currentTime = percentage * audioRef.current.duration;
+        }
+    }, []);
+
+    const handleSeekClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const width = rect.width;
+        const percentage = x / width;
+        seekTo(percentage);
+    };
+
+    const handleSeekKeyDown = (e: React.KeyboardEvent) => {
+        const step = 0.05; // 5% steps
+        if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            seekTo(Math.min(1, progress / 100 + step));
+        } else if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            seekTo(Math.max(0, progress / 100 - step));
+        }
+    };
+
     // Styles Configuration
     const styles = {
         sent: {
@@ -89,29 +122,34 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, variant = 'received' }) 
     };
 
     const currentStyle = styles[variant];
+    const currentTime = audioRef.current?.currentTime || 0;
 
     return (
-        <div className="flex items-center gap-3 min-w-[220px] py-1 select-none group">
+        <div className="flex items-center gap-3 min-w-[220px] py-1 select-none group" role="group" aria-label="Player de áudio">
             <audio ref={audioRef} src={src} className="hidden" />
 
             <button
+                type="button"
                 onClick={togglePlay}
-                className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-95 shadow-sm ${currentStyle.btn}`}
+                aria-label={isPlaying ? 'Pausar áudio' : 'Reproduzir áudio'}
+                className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-all active:scale-95 shadow-sm focus-visible-ring ${currentStyle.btn}`}
             >
-                {isPlaying ? <Pause size={14} fill="currentColor" /> : <Play size={14} fill="currentColor" className="ml-0.5" />}
+                {isPlaying ? <Pause size={14} fill="currentColor" aria-hidden="true" /> : <Play size={14} fill="currentColor" className="ml-0.5" aria-hidden="true" />}
             </button>
 
             <div className="flex flex-col gap-1 flex-1 min-w-0">
-                {/* Waveform Visualization */}
-                <div className="flex items-center gap-[2px] h-6 cursor-pointer" onClick={(e) => {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const width = rect.width;
-                    const percentage = x / width;
-                    if (audioRef.current && audioRef.current.duration) {
-                        audioRef.current.currentTime = percentage * audioRef.current.duration;
-                    }
-                }}>
+                {/* Waveform Visualization - Now a button for keyboard access */}
+                <button
+                    type="button"
+                    onClick={handleSeekClick}
+                    onKeyDown={handleSeekKeyDown}
+                    aria-label="Barra de progresso do áudio"
+                    aria-valuenow={Math.round(progress)}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    role="slider"
+                    className="flex items-center gap-[2px] h-6 cursor-pointer focus-visible-ring rounded"
+                >
                     {waveform.map((height, index) => {
                         const barPercent = (index / waveform.length) * 100;
                         const isPlayed = barPercent < progress;
@@ -121,15 +159,16 @@ const AudioPlayer: React.FC<AudioPlayerProps> = ({ src, variant = 'received' }) 
                                 key={index}
                                 className={`w-[3px] rounded-full transition-all duration-200 ${isPlayed ? currentStyle.barActive : currentStyle.barInactive}`}
                                 style={{ height: `${Math.max(height * 100, 15)}%` }}
+                                aria-hidden="true"
                             />
                         );
                     })}
-                </div>
+                </button>
                 <div className="flex justify-between items-center text-[10px] font-medium opacity-80 px-0.5">
-                    <span className={currentStyle.text}>
-                        {formatTime(audioRef.current?.currentTime || 0)}
+                    <span className={currentStyle.text} aria-label="Tempo atual">
+                        {formatTime(currentTime)}
                     </span>
-                    <span className={currentStyle.text}>
+                    <span className={currentStyle.text} aria-label="Duração total">
                         {formatTime(duration)}
                     </span>
                 </div>

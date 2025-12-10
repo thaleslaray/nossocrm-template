@@ -1,54 +1,118 @@
+/**
+ * @fileoverview Serviço Supabase para gerenciamento de deals (negócios/oportunidades).
+ * 
+ * Este módulo fornece operações CRUD para deals e seus itens,
+ * com transformação automática entre o formato do banco e o formato da aplicação.
+ * 
+ * ## Conceitos de Deal
+ * 
+ * - Deals são oportunidades de venda em um pipeline/board
+ * - `stage_id` define a coluna atual no kanban
+ * - `is_won` / `is_lost` indicam se o deal foi fechado
+ * - `board_id` é obrigatório e define qual pipeline o deal pertence
+ * 
+ * @module lib/supabase/deals
+ */
+
 import { supabase } from './client';
-import { Deal, DealItem } from '@/types';
+import { Deal, DealItem, OrganizationId } from '@/types';
 import { sanitizeUUID, requireUUID, isValidUUID } from './utils';
 
 // ============================================
 // DEALS SERVICE
 // ============================================
 
+/**
+ * Representação de deal no banco de dados.
+ * 
+ * @interface DbDeal
+ */
 export interface DbDeal {
+  /** ID único do deal (UUID). */
   id: string;
+  /** ID da organização/tenant. */
+  organization_id: string;
+  /** Título do deal. */
   title: string;
+  /** Valor monetário do deal. */
   value: number;
+  /** Probabilidade de fechamento (0-100). */
   probability: number;
-  status: string | null; // @deprecated - usar is_won/is_lost
+  /** Status legado (deprecado, usar stage_id). */
+  status: string | null;
+  /** Prioridade (low, medium, high). */
   priority: string;
+  /** ID do board/pipeline. */
   board_id: string | null;
+  /** ID do estágio atual no kanban. */
   stage_id: string | null;
+  /** ID do contato associado. */
   contact_id: string | null;
-  crm_company_id: string | null;
+  /** ID da empresa CRM associada. */
+  client_company_id: string | null;
+  /** Resumo gerado por IA. */
   ai_summary: string | null;
+  /** Motivo da perda, se aplicável. */
   loss_reason: string | null;
+  /** Tags associadas. */
   tags: string[];
+  /** Data da última mudança de estágio. */
   last_stage_change_date: string | null;
+  /** Campos customizados. */
   custom_fields: Record<string, any>;
+  /** Data de criação. */
   created_at: string;
+  /** Data de atualização. */
   updated_at: string;
+  /** ID do dono/responsável. */
   owner_id: string | null;
-  // Novos campos para status final
+  /** Indica se o deal foi ganho. */
   is_won: boolean;
+  /** Indica se o deal foi perdido. */
   is_lost: boolean;
+  /** Data de fechamento. */
   closed_at: string | null;
 }
 
+/**
+ * Representação de item de deal no banco de dados.
+ * 
+ * @interface DbDealItem
+ */
 export interface DbDealItem {
+  /** ID único do item. */
   id: string;
+  /** ID da organização/tenant. */
+  organization_id: string;
+  /** ID do deal pai. */
   deal_id: string;
+  /** ID do produto do catálogo. */
   product_id: string | null;
+  /** Nome do item. */
   name: string;
+  /** Quantidade. */
   quantity: number;
+  /** Preço unitário. */
   price: number;
+  /** Data de criação. */
   created_at: string;
 }
 
-// Transform DB -> App
+/**
+ * Transforma deal do formato DB para o formato da aplicação.
+ * 
+ * @param db - Deal no formato do banco.
+ * @param items - Itens do deal no formato do banco.
+ * @returns Deal no formato da aplicação.
+ */
 const transformDeal = (db: DbDeal, items: DbDealItem[]): Deal => {
   // Usar stage_id como status (UUID do estágio no kanban)
   // is_won e is_lost indicam se o deal foi fechado
   const stageStatus = db.stage_id || db.status || '';
-  
+
   return {
     id: db.id,
+    organizationId: db.organization_id,
     title: db.title,
     value: db.value || 0,
     probability: db.probability || 0,
@@ -59,7 +123,8 @@ const transformDeal = (db: DbDeal, items: DbDealItem[]): Deal => {
     priority: (db.priority as Deal['priority']) || 'medium',
     boardId: db.board_id || '',
     contactId: db.contact_id || '',
-    companyId: db.crm_company_id || '',
+    clientCompanyId: db.client_company_id || undefined,
+    companyId: db.client_company_id || '', // @deprecated - backwards compatibility
     aiSummary: db.ai_summary || undefined,
     lossReason: db.loss_reason || undefined,
     tags: db.tags || [],
@@ -71,47 +136,80 @@ const transformDeal = (db: DbDeal, items: DbDealItem[]): Deal => {
       .filter(i => i.deal_id === db.id)
       .map(i => ({
         id: i.id,
+        organizationId: i.organization_id,
         productId: i.product_id || '',
         name: i.name,
         quantity: i.quantity,
         price: i.price,
       })),
-    owner: { name: 'Você', avatar: '' }, // Will be enriched later
+    owner: { name: 'Sem Dono', avatar: '' }, // Will be enriched later
+    ownerId: db.owner_id || undefined,
   };
 };
 
-// Transform App -> DB
+/**
+ * Transforma deal do formato da aplicação para o formato DB.
+ * 
+ * @param deal - Deal parcial no formato da aplicação.
+ * @returns Deal parcial no formato do banco.
+ */
 const transformDealToDb = (deal: Partial<Deal>): Partial<DbDeal> => {
   const db: Partial<DbDeal> = {};
-  
+
   if (deal.title !== undefined) db.title = deal.title;
   if (deal.value !== undefined) db.value = deal.value;
   if (deal.probability !== undefined) db.probability = deal.probability;
-  
+
   // Status = stage_id (UUID do estágio no kanban)
   if (deal.status !== undefined && isValidUUID(deal.status)) {
     db.stage_id = deal.status;
   }
-  
+
   // Campos de fechamento
   if (deal.isWon !== undefined) db.is_won = deal.isWon;
   if (deal.isLost !== undefined) db.is_lost = deal.isLost;
   if (deal.closedAt !== undefined) db.closed_at = deal.closedAt || null;
-  
+
   if (deal.priority !== undefined) db.priority = deal.priority;
   if (deal.boardId !== undefined) db.board_id = sanitizeUUID(deal.boardId);
   if (deal.contactId !== undefined) db.contact_id = sanitizeUUID(deal.contactId);
-  if (deal.companyId !== undefined) db.crm_company_id = sanitizeUUID(deal.companyId);
+  // Support both new clientCompanyId and deprecated companyId
+  if (deal.clientCompanyId !== undefined) db.client_company_id = sanitizeUUID(deal.clientCompanyId);
+  else if (deal.companyId !== undefined) db.client_company_id = sanitizeUUID(deal.companyId);
   if (deal.aiSummary !== undefined) db.ai_summary = deal.aiSummary || null;
   if (deal.lossReason !== undefined) db.loss_reason = deal.lossReason || null;
   if (deal.tags !== undefined) db.tags = deal.tags;
   if (deal.lastStageChangeDate !== undefined) db.last_stage_change_date = deal.lastStageChangeDate || null;
   if (deal.customFields !== undefined) db.custom_fields = deal.customFields;
-  
+  if (deal.ownerId !== undefined) db.owner_id = sanitizeUUID(deal.ownerId);
+
   return db;
 };
 
+/**
+ * Serviço de deals do Supabase.
+ * 
+ * Fornece operações CRUD para a tabela `deals` e `deal_items`.
+ * Deals representam oportunidades de venda em diferentes estágios do pipeline.
+ * 
+ * @example
+ * ```typescript
+ * // Buscar todos os deals
+ * const { data, error } = await dealsService.getAll();
+ * 
+ * // Criar um novo deal
+ * const { data, error } = await dealsService.create(
+ *   { title: 'Contrato Anual', value: 50000, boardId: 'board-uuid' },
+ *   organizationId
+ * );
+ * ```
+ */
 export const dealsService = {
+  /**
+   * Busca todos os deals da organização com seus itens.
+   * 
+   * @returns Promise com array de deals ou erro.
+   */
   async getAll(): Promise<{ data: Deal[] | null; error: Error | null }> {
     try {
       const [dealsResult, itemsResult] = await Promise.all([
@@ -122,7 +220,7 @@ export const dealsService = {
       if (dealsResult.error) return { data: null, error: dealsResult.error };
       if (itemsResult.error) return { data: null, error: itemsResult.error };
 
-      const deals = (dealsResult.data || []).map(d => 
+      const deals = (dealsResult.data || []).map(d =>
         transformDeal(d as DbDeal, (itemsResult.data || []) as DbDealItem[])
       );
       return { data: deals, error: null };
@@ -131,6 +229,12 @@ export const dealsService = {
     }
   },
 
+  /**
+   * Busca um deal específico pelo ID.
+   * 
+   * @param id - ID do deal.
+   * @returns Promise com o deal ou erro.
+   */
   async getById(id: string): Promise<{ data: Deal | null; error: Error | null }> {
     try {
       const [dealResult, itemsResult] = await Promise.all([
@@ -147,11 +251,20 @@ export const dealsService = {
     }
   },
 
-  async create(deal: Omit<Deal, 'id' | 'createdAt'> & { stageId?: string }, companyId: string | null): Promise<{ data: Deal | null; error: Error | null }> {
+  /**
+   * Cria um novo deal.
+   * 
+   * Valida que o board_id existe antes de inserir.
+   * 
+   * @param deal - Dados do deal (sem id e createdAt).
+   * @returns Promise com deal criado ou erro.
+   * @throws Error se board_id for inválido ou não existir.
+   */
+  async create(deal: Omit<Deal, 'id' | 'createdAt'> & { stageId?: string }): Promise<{ data: Deal | null; error: Error | null }> {
     try {
       // stageId pode vir separado ou ser o mesmo que status
       const stageId = deal.stageId || deal.status || null;
-      
+
       // Validação: board_id é OBRIGATÓRIO e deve existir
       let boardId: string;
       try {
@@ -159,21 +272,21 @@ export const dealsService = {
       } catch (e) {
         return { data: null, error: e as Error };
       }
-      
+
       // Validação: verifica se o board existe antes de inserir
       const { data: boardExists, error: boardCheckError } = await supabase
         .from('boards')
         .select('id')
         .eq('id', boardId)
         .single();
-      
+
       if (boardCheckError || !boardExists) {
-        return { 
-          data: null, 
-          error: new Error(`Board não encontrado: ${boardId}. Recarregue a página.`) 
+        return {
+          data: null,
+          error: new Error(`Board não encontrado: ${boardId}. Recarregue a página.`)
         };
       }
-      
+
       const insertData = {
         title: deal.title,
         value: deal.value || 0,
@@ -183,19 +296,28 @@ export const dealsService = {
         board_id: boardId,
         stage_id: sanitizeUUID(stageId),
         contact_id: sanitizeUUID(deal.contactId),
-        crm_company_id: sanitizeUUID(deal.companyId),
+        client_company_id: sanitizeUUID(deal.clientCompanyId || deal.companyId),
         tags: deal.tags || [],
         custom_fields: deal.customFields || {},
-        // company_id (tenant) será preenchido pelo trigger
+        owner_id: sanitizeUUID(deal.ownerId),
       };
-      
+
       const { data, error } = await supabase
         .from('deals')
         .insert(insertData)
         .select()
         .single();
 
-      if (error) return { data: null, error };
+      if (error) {
+        // Trata erro de duplicidade do backend
+        if (error.code === '23505' || error.message?.includes('unique_violation') || error.message?.includes('Já existe um negócio')) {
+          return {
+            data: null,
+            error: new Error('Já existe um negócio com este título para este contato. Altere o título ou selecione outro contato.')
+          };
+        }
+        return { data: null, error };
+      }
 
       // Create items if any
       if (deal.items && deal.items.length > 0) {
@@ -220,9 +342,9 @@ export const dealsService = {
         .select('*')
         .eq('deal_id', data.id);
 
-      return { 
-        data: transformDeal(data as DbDeal, (items || []) as DbDealItem[]), 
-        error: null 
+      return {
+        data: transformDeal(data as DbDeal, (items || []) as DbDealItem[]),
+        error: null
       };
     } catch (e) {
       return { data: null, error: e as Error };
@@ -239,7 +361,17 @@ export const dealsService = {
         .update(dbUpdates)
         .eq('id', id);
 
-      return { error };
+      if (error) {
+        // Trata erro de duplicidade do backend
+        if (error.code === '23505' || error.message?.includes('unique_violation') || error.message?.includes('Já existe um negócio')) {
+          return {
+            error: new Error('Já existe um negócio com este título para este contato. Altere o título ou selecione outro contato.')
+          };
+        }
+        return { error };
+      }
+
+      return { error: null };
     } catch (e) {
       return { error: e as Error };
     }
@@ -373,7 +505,7 @@ export const dealsService = {
         closed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       };
-      
+
       if (lossReason) {
         updates.loss_reason = lossReason;
       }

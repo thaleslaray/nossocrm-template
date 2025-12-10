@@ -1,79 +1,98 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+import { corsPreflightResponse, jsonResponse, errorResponse } from "../_shared/cors.ts";
+import { getRequestMetadata } from "../_shared/auth.ts";
+import { supabaseAdmin } from "../_shared/supabaseAdmin.ts";
 
-serve(async (req) => {
-    if (req.method === 'OPTIONS') {
-        return new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type' } })
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return corsPreflightResponse(req);
+  }
+
+  const { ipAddress, userAgent } = getRequestMetadata(req);
+
+  try {
+    const { companyName, email, password } = await req.json();
+
+    // Only allow setup if not initialized
+    const { data: isInitialized, error: initError } = await supabaseAdmin.rpc(
+      "is_instance_initialized"
+    );
+
+    if (initError) throw initError;
+    if (isInitialized) {
+      // Log attempt (fire-and-forget, errors ignored)
+      supabaseAdmin.rpc("log_audit_event", {
+        p_user_id: null,
+        p_action: "SETUP_INSTANCE_BLOCKED",
+        p_details: { reason: "instance_already_initialized" },
+        p_ip_address: ipAddress,
+        p_user_agent: userAgent,
+        p_success: false,
+      }).then(() => {}).catch(() => {});
+
+      return errorResponse("Instance already initialized", req, 403);
     }
 
-    try {
-        const { companyName, email, password } = await req.json()
+    // Create organization (renamed from company)
+    const { data: organization, error: orgError } = await supabaseAdmin
+      .from("organizations")
+      .insert({ name: companyName })
+      .select()
+      .single();
 
-        // Create Supabase client with Admin (Service Role) key
-        const supabaseAdmin = createClient(
-            Deno.env.get('SUPABASE_URL') ?? '',
-            Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-        )
+    if (orgError) throw orgError;
 
-        // 1. Check if initialized
-        const { data: isInitialized, error: initError } = await supabaseAdmin
-            .rpc('is_instance_initialized')
+    // Create user
+    const { data: user, error: userError } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        role: "admin",
+        organization_id: organization.id,
+      },
+    });
 
-        if (initError) throw initError
-        if (isInitialized) return new Response(JSON.stringify({ error: 'Instance already initialized' }), { status: 400, headers: { 'Content-Type': 'application/json' } })
-
-        // 2. Create Company
-        const { data: company, error: companyError } = await supabaseAdmin
-            .from('companies')
-            .insert({ name: companyName })
-            .select()
-            .single()
-
-        if (companyError) throw companyError
-
-        // 3. Create User with metadata (trigger will use this to create profile)
-        const { data: user, error: userError } = await supabaseAdmin.auth.admin.createUser({
-            email,
-            password,
-            email_confirm: true,
-            user_metadata: {
-                role: 'admin',
-                company_id: company.id
-            }
-        })
-
-        if (userError) {
-            // Rollback company creation
-            await supabaseAdmin.from('companies').delete().eq('id', company.id)
-            throw userError
-        }
-
-        // 4. Criar profile diretamente (não depender do trigger)
-        // Primeiro tenta inserir, se falhar (trigger já criou), faz update
-        const { error: insertProfileError } = await supabaseAdmin
-            .from('profiles')
-            .upsert({
-                id: user.user.id,
-                email: email,
-                name: email.split('@')[0],
-                company_id: company.id,
-                role: 'admin'
-            }, { 
-                onConflict: 'id' 
-            })
-
-        if (insertProfileError) {
-            // Rollback user and company
-            await supabaseAdmin.auth.admin.deleteUser(user.user.id)
-            await supabaseAdmin.from('companies').delete().eq('id', company.id)
-            throw insertProfileError
-        }
-
-        return new Response(
-            JSON.stringify({ message: 'Instance setup successfully', company, user }),
-            { headers: { "Content-Type": "application/json", 'Access-Control-Allow-Origin': '*' } },
-        )
-    } catch (error) {
-        return new Response(JSON.stringify({ error: error.message }), { status: 400, headers: { "Content-Type": "application/json", 'Access-Control-Allow-Origin': '*' } })
+    if (userError) {
+      await supabaseAdmin.from("organizations").delete().eq("id", organization.id);
+      throw userError;
     }
-})
+
+    // Create profile
+    const { error: insertProfileError } = await supabaseAdmin
+      .from("profiles")
+      .upsert(
+        {
+          id: user.user.id,
+          email: email,
+          name: email.split("@")[0],
+          organization_id: organization.id,
+          role: "admin",
+        },
+        { onConflict: "id" }
+      );
+
+    if (insertProfileError) {
+      await supabaseAdmin.auth.admin.deleteUser(user.user.id);
+      await supabaseAdmin.from("organizations").delete().eq("id", organization.id);
+      throw insertProfileError;
+    }
+
+    // Log success (fire-and-forget, errors ignored)
+    supabaseAdmin.rpc("log_audit_event", {
+      p_user_id: user.user.id,
+      p_action: "SETUP_INSTANCE",
+      p_target_type: "organization",
+      p_target_id: organization.id,
+      p_organization_id: organization.id,
+      p_details: { email, organization_name: companyName },
+      p_ip_address: ipAddress,
+      p_user_agent: userAgent,
+      p_success: true,
+    }).then(() => {}).catch(() => {});
+
+    return jsonResponse({ message: "Instance setup successfully", organization, user }, req);
+  } catch (error: unknown) {
+    const err = error as Error;
+    return errorResponse(err.message || "Internal error", req, 400);
+  }
+});

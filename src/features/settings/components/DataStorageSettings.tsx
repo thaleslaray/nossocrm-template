@@ -15,7 +15,7 @@ export const DataStorageSettings: React.FC = () => {
     const { profile } = useAuth();
     const { addToast } = useToast();
     const queryClient = useQueryClient();
-    
+
     const [showDangerZone, setShowDangerZone] = useState(false);
     const [confirmText, setConfirmText] = useState('');
     const [isDeleting, setIsDeleting] = useState(false);
@@ -55,6 +55,13 @@ export const DataStorageSettings: React.FC = () => {
             const { error: dealsError } = await supabase.from('deals').delete().neq('id', '00000000-0000-0000-0000-000000000000');
             if (dealsError) throw dealsError;
 
+            // 0. Limpar referência de Active Board em user_settings (evita erro de FK)
+            const { error: userSettingsError } = await supabase
+                .from('user_settings')
+                .update({ active_board_id: null })
+                .neq('id', '00000000-0000-0000-0000-000000000000'); // Update all
+            if (userSettingsError) console.warn('Aviso: erro ao limpar user_settings (pode não existir ainda):', userSettingsError);
+
             // 4. Board Stages (depende de boards)
             const { error: stagesError } = await supabase.from('board_stages').delete().neq('id', '00000000-0000-0000-0000-000000000000');
             if (stagesError) throw stagesError;
@@ -81,7 +88,7 @@ export const DataStorageSettings: React.FC = () => {
 
             // Invalida todo o cache do React Query
             await queryClient.invalidateQueries();
-            
+
             // Força refresh de todos os contexts (Activities, Deals, etc.)
             await refresh();
 
@@ -179,11 +186,10 @@ export const DataStorageSettings: React.FC = () => {
                                 <button
                                     onClick={handleNukeDatabase}
                                     disabled={confirmText !== 'DELETAR TUDO' || isDeleting}
-                                    className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium transition-all ${
-                                        confirmText === 'DELETAR TUDO' && !isDeleting
+                                    className={`w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl font-medium transition-all ${confirmText === 'DELETAR TUDO' && !isDeleting
                                             ? 'bg-red-600 hover:bg-red-700 text-white'
                                             : 'bg-slate-200 dark:bg-dark-hover text-slate-400 cursor-not-allowed'
-                                    }`}
+                                        }`}
                                 >
                                     {isDeleting ? (
                                         <>

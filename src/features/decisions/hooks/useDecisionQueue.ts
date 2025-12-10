@@ -11,8 +11,8 @@ import { runAllAnalyzers } from '../analyzers';
 
 export function useDecisionQueue() {
   const { deals, activities, addActivity, updateActivity, updateDeal } = useCRM();
-  
-  const [decisions, setDecisions] = useState<Decision[]>(() => 
+
+  const [decisions, setDecisions] = useState<Decision[]>(() =>
     decisionQueueService.getPendingDecisions()
   );
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -35,7 +35,7 @@ export function useDecisionQueue() {
   // Run all analyzers
   const runAnalyzers = useCallback(async () => {
     setIsAnalyzing(true);
-    
+
     try {
       const result = await runAllAnalyzers(deals, activities);
       refreshDecisions();
@@ -51,14 +51,12 @@ export function useDecisionQueue() {
     decision: Decision
   ): Promise<boolean> => {
     const { type, payload } = action;
-    console.log('[executeAction] Starting:', { type, payload, decision });
 
     try {
       switch (type) {
         case 'create_activity':
         case 'schedule_call':
         case 'schedule_meeting': {
-          console.log('[executeAction] Creating activity...', payload);
           if (payload.activityTitle && payload.activityDate) {
             const newActivity = {
               id: crypto.randomUUID(),
@@ -71,61 +69,50 @@ export function useDecisionQueue() {
               user: { name: 'Você', avatar: '' },
               completed: false,
             };
-            console.log('[executeAction] New activity object:', newActivity);
             addActivity(newActivity);
-            console.log('[executeAction] Activity added successfully');
             return true;
           }
-          console.log('[executeAction] Missing activityTitle or activityDate');
           break;
         }
 
         case 'move_deal': {
-          console.log('[executeAction] Moving deal...', decision.dealId, payload.newStage);
           if (decision.dealId && payload.newStage) {
             updateDeal(decision.dealId, { status: payload.newStage as any });
-            console.log('[executeAction] Deal moved successfully');
             return true;
           }
-          console.log('[executeAction] Missing dealId or newStage');
           break;
         }
 
         case 'dismiss': {
           // "Marcar como Feita" - marca a atividade original como concluída
-          console.log('[executeAction] Dismissing/completing activity:', decision.activityId);
           if (decision.activityId) {
             updateActivity(decision.activityId, { completed: true });
-            console.log('[executeAction] Activity marked as completed');
           }
           return true;
         }
 
         case 'send_message': {
-          console.log('[executeAction] Sending message:', payload.channel, payload.recipient);
           // Abre WhatsApp Web com a mensagem pré-preenchida
           if (payload.channel === 'whatsapp' && payload.messageTemplate) {
             const message = encodeURIComponent(payload.messageTemplate);
             // Se tiver número de telefone, usa; senão abre só com a mensagem
             const phone = payload.recipient?.replace(/\D/g, '') || '';
-            const url = phone 
+            const url = phone
               ? `https://wa.me/${phone}?text=${message}`
               : `https://wa.me/?text=${message}`;
-            console.log('[executeAction] Opening WhatsApp:', url);
             window.open(url, '_blank');
             return true;
           }
-          
+
           // Para email, abre o cliente de email
           if (payload.channel === 'email' && payload.recipient) {
             const subject = encodeURIComponent(`Follow-up`);
             const body = encodeURIComponent(payload.messageTemplate || '');
             const url = `mailto:${payload.recipient}?subject=${subject}&body=${body}`;
-            console.log('[executeAction] Opening email:', url);
             window.open(url, '_blank');
             return true;
           }
-          
+
           return true;
         }
 
@@ -156,10 +143,8 @@ export function useDecisionQueue() {
 
     try {
       const actionToExecute = action || decision.suggestedAction;
-      console.log('[DecisionQueue] Executing action:', actionToExecute.type, actionToExecute.payload);
-      
+
       const success = await executeAction(actionToExecute, decision);
-      console.log('[DecisionQueue] Action result:', success);
 
       if (success) {
         decisionQueueService.updateDecisionStatus(id, 'approved');
@@ -193,7 +178,7 @@ export function useDecisionQueue() {
   // Approve all pending decisions
   const approveAll = useCallback(async () => {
     const pendingIds = decisions.map(d => d.id);
-    
+
     for (const id of pendingIds) {
       await approveDecision(id);
     }
@@ -210,11 +195,11 @@ export function useDecisionQueue() {
     decisions,
     stats,
     lastAnalyzedAt,
-    
+
     // State
     isAnalyzing,
     executingIds,
-    
+
     // Actions
     runAnalyzers,
     approveDecision,

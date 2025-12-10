@@ -1,5 +1,82 @@
 # NossoCRM - AI Coding Instructions
 
+## 🚨 CRITICAL: Multi-Tenant Naming Convention
+
+> **LEIA ISTO PRIMEIRO - REGRA MAIS IMPORTANTE DO PROJETO**
+
+Este é um SaaS multi-tenant. Existem **DOIS tipos de "empresa"** no sistema:
+
+### 1. `Organization` (Tenant) - Quem PAGA pelo SaaS
+
+| Campo | Descrição |
+|-------|-----------|
+| `organization_id` | UUID do tenant (empresa que assina o CRM) |
+| Tabela: `organizations` | Armazena tenants do SaaS |
+| Origem | `useAuth().organizationId` ou `profile.organization_id` |
+| Uso | **RLS**, isolamento de dados, billing |
+
+### 2. `CRMCompany` / `ClientCompany` - Empresa do CLIENTE
+
+| Campo | Descrição |
+|-------|-----------|
+| `client_company_id` | UUID da empresa cadastrada no CRM |
+| Tabela: `crm_companies` | Empresas que são clientes/prospects |
+| Origem | Selecionado pelo usuário em formulários |
+| Uso | Relacionamento comercial, organizar contatos |
+
+### ⚠️ NUNCA CONFUNDA!
+
+```typescript
+// ❌ ERRADO - Vai quebrar isolamento multi-tenant!
+const deal = {
+  organization_id: selectedCompany.id,  // ERRADO! Isso é client_company_id
+};
+
+// ✅ CORRETO
+const deal = {
+  organization_id: organizationId,        // Do useAuth() - para RLS
+  client_company_id: selectedCompany.id,  // Do formulário - relacionamento
+};
+```
+
+### Diagrama Visual
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  SUPABASE (Multi-tenant via RLS)                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  ORGANIZATION "Imobiliária XYZ" (organization_id: A)  │  │
+│  │  ════════════════════════════════════════════════════ │  │
+│  │  profiles: João (admin), Maria (vendedor)             │  │
+│  │  crm_companies: "Construtora ABC", "Empresa DEF"      │  │
+│  │  contacts: Carlos (→ABC), Ana (→DEF), Pedro           │  │
+│  │  deals: todos têm organization_id = A                 │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │  ORGANIZATION "Consultoria Acme" (organization_id: B) │  │
+│  │  ════════════════════════════════════════════════════ │  │
+│  │  profiles: Roberto (admin)                            │  │
+│  │  crm_companies: "Cliente X", "Cliente Y"              │  │
+│  │  contacts: Fulano (→X), Ciclano (→Y)                  │  │
+│  │  deals: todos têm organization_id = B                 │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                                                             │
+│  🔒 RLS: WHERE organization_id = get_user_organization_id() │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Checklist para Code Review
+
+- [ ] `organization_id` vem do auth/profile, nunca de input do usuário
+- [ ] `client_company_id` é opcional e vem de seleção no form
+- [ ] Tabela `organizations` = tenants, não clientes
+- [ ] Tabela `crm_companies` = empresas cadastradas no CRM
+
+---
+
 ## ⚠️ VALIDAÇÃO DE DADOS - LEIA PRIMEIRO
 
 **Stack de validação**: Use Zod (`z.uuid()`, `z.string()`) para validar dados antes de salvar. IDs vazios = null ou erro. Nunca confie no frontend.
@@ -108,26 +185,27 @@ All domain types in `/types.ts`:
 **Supabase Auth** (`context/AuthContext.tsx`):
 
 ```tsx
-const { user, profile, session, signOut, loading } = useAuth();
-// profile inclui: company_id, role ('admin' | 'vendedor')
+const { user, profile, session, signOut, loading, organizationId } = useAuth();
+// profile inclui: organization_id, role ('admin' | 'vendedor')
+// organizationId é um getter conveniente para profile.organization_id
 ```
 
-**Multi-tenant**: Todas as queries filtram por `company_id` do usuário logado via RLS.
+**Multi-tenant**: Todas as queries filtram por `organization_id` do usuário logado via RLS.
 
 ## Supabase Database
 
-**Schema location**: `supabase/migrations/000_schema.sql`
+**Schema location**: `supabase/migrations/20231201000000_schema.sql`
 
 **Tabelas principais:**
 
 ```
 TENANTS:
-- companies           # Empresas SaaS (tenants)
+- organizations       # Organizações SaaS (tenants)
 - profiles            # Usuários (estende auth.users)
 
 CRM:
 - contacts            # Contatos
-- crm_companies       # Empresas dos clientes
+- client_companies    # Empresas dos clientes (antes: crm_companies)
 - deals               # Negócios/Oportunidades
 - deal_items          # Produtos do deal
 - activities          # Tarefas e reuniões
@@ -148,17 +226,17 @@ AI:
 
 **Edge Functions** (`supabase/functions/`):
 
-- `setup-instance` - Onboarding: cria company + admin
-- `create-user` - Cria usuário na company
+- `setup-instance` - Onboarding: cria organization + admin
+- `create-user` - Cria usuário na organization
 - `delete-user` - Remove usuário
-- `list-users` - Lista usuários da company
+- `list-users` - Lista usuários da organization
 - `invite-users` - Convite em batch
 
 **RLS Best Practices:**
 
 - Use `(select auth.uid())` nas policies (não `auth.uid()` direto) - 20x mais rápido
 - `TO authenticated` em todas as policies
-- Índices em `company_id`, `owner_id`, todas as FKs
+- Índices em `organization_id`, `owner_id`, todas as FKs
 - `ON DELETE CASCADE` ou `SET NULL` nas FKs
 - `TIMESTAMPTZ` para datas (não `TIMESTAMP`)
 
@@ -184,12 +262,12 @@ notes: sanitizeText(contact.notes),  // "  " → null
 ### Regras de IDs:
 
 ```
-company_id  = Tenant ID (quem PAGA pelo SaaS) - vem do auth/profile
-crm_company_id = Empresa DO CLIENTE do usuário - cadastrada no CRM
+organization_id  = Tenant ID (quem PAGA pelo SaaS) - vem do auth/profile
+client_company_id = Empresa DO CLIENTE do usuário - cadastrada no CRM
 
 NUNCA confunda os dois! 
-- company_id: segurança multi-tenant (RLS)
-- crm_company_id: relacionamento de negócio
+- organization_id: segurança multi-tenant (RLS)
+- client_company_id: relacionamento de negócio
 ```
 
 ### Ao criar/editar Services:
@@ -214,6 +292,46 @@ Key functions:
 
 API key: `import.meta.env.VITE_GEMINI_API_KEY`
 
+---
+
+## IA e LGPD - Consentimento Implícito
+
+> **Modelo simplificado: Configurar API Key = Consentimento**
+
+### Como funciona
+
+A IA só funciona quando o usuário configura sua própria chave de API em Configurações → Inteligência Artificial. 
+A ação de adicionar a key é uma **ação afirmativa inequívoca** que constitui consentimento válido sob a LGPD.
+
+### Para novas features de IA
+
+Apenas verifique se `aiApiKey` existe antes de chamar funções de IA:
+
+```tsx
+const { aiApiKey } = useCRM();
+
+const handleAIAction = async () => {
+  if (!aiApiKey?.trim()) {
+    addToast('Configure sua chave de API em Configurações → Inteligência Artificial', 'warning');
+    return;
+  }
+  // ... chamar função de IA
+};
+```
+
+### Arquivos removidos (não mais necessários)
+
+- ~~`useAIConsent.ts`~~ - Hook de consentimento removido
+- ~~`AIConsentModal.tsx`~~ - Modal de consentimento removido
+- ~~Verificação de consent no ai-proxy~~ - Removida
+
+### PrivacySection
+
+A seção de privacidade agora apenas informa sobre como os dados são processados.
+Não há mais toggle para ativar/desativar IA - isso é controlado pela presença da API Key.
+
+---
+
 ## Testing
 
 **Framework**: Vitest + React Testing Library + happy-dom
@@ -236,11 +354,21 @@ import { render, screen } from '@/test/test-utils';
 ## Commands
 
 ```bash
+# Dev & Build
 npm run dev        # Dev server (porta 3003)
 npm run build      # Production build
 npm test           # Run tests in watch mode
 npm run test:run   # Single run
 npx tsc --noEmit   # Type check
+
+# Supabase CLI (projeto já linkado)
+supabase db reset --linked              # Reset TOTAL do banco remoto (deleta tudo e reaplicar migrations)
+supabase db push                        # Aplica migrations pendentes no banco remoto
+supabase migration repair --status reverted <timestamps>  # Marca migrations como revertidas
+supabase functions deploy <nome>        # Deploy de Edge Function
+supabase functions deploy <nome> --no-verify-jwt  # Deploy sem verificação JWT (para funções públicas)
+supabase functions list                 # Lista Edge Functions deployadas
+supabase functions delete <nome>        # Remove Edge Function
 ```
 
 ## Common Tasks
@@ -265,6 +393,56 @@ npx tsc --noEmit   # Type check
 
 1. Add migration in `supabase/migrations/`
 2. Add RLS policies with `(select auth.uid())` pattern
-3. Add indexes on company_id, owner_id, FKs
+3. Add indexes on organization_id, owner_id, FKs
 4. Create service in `lib/supabase/`
 5. Create Query hooks
+
+---
+
+## Accessibility (WCAG 2.1 AA)
+
+O projeto segue WCAG 2.1 Level AA. Veja `docs/ACCESSIBILITY.md` para detalhes.
+
+### A11y Library (`src/lib/a11y/`)
+
+```typescript
+import { FocusTrap, useFocusReturn, SkipLink, LiveRegion } from '@/lib/a11y';
+```
+
+### Modal Pattern (OBRIGATÓRIO)
+
+Todo modal DEVE incluir:
+
+```tsx
+import { FocusTrap, useFocusReturn } from '@/lib/a11y';
+
+function Modal({ isOpen, onClose }) {
+  const triggerRef = useFocusReturn(isOpen);
+  
+  return (
+    <FocusTrap active={isOpen} onEscape={onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <h2 id="modal-title">Título</h2>
+      </div>
+    </FocusTrap>
+  );
+}
+```
+
+### Form Pattern
+
+Use `FormField` para campos de formulário (ARIA automático):
+
+```tsx
+<FormField label="Email" required error={errors.email}>
+  <input type="email" />
+</FormField>
+```
+
+### Checklist A11y
+
+- [ ] Modais: `role="dialog"`, `aria-modal`, `aria-labelledby`, FocusTrap
+- [ ] Botões com ícone: `aria-label="Descrição da ação"`
+- [ ] Forms: Labels associados, `aria-required`, erros com `role="alert"`
+- [ ] Hierarquia de headings: h1 → h2 → h3 (sem pular níveis)
+- [ ] Testes: Use `expectNoA11yViolations()` de `@/lib/a11y/test/a11y-utils`

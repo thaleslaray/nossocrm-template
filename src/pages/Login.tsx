@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getErrorMessage } from '@/utils/errorUtils';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Loader2, Mail, Lock, ArrowRight } from 'lucide-react';
@@ -23,8 +24,10 @@ const Login: React.FC = () => {
 
             if (error) throw error;
             navigate('/');
-        } catch (err: any) {
-            setError(err.message || 'Falha ao realizar login');
+            if (error) throw error;
+            navigate('/');
+        } catch (err) {
+            setError(getErrorMessage(err));
         } finally {
             setLoading(false);
         }
@@ -64,6 +67,8 @@ const Login: React.FC = () => {
                                     type="email"
                                     autoComplete="email"
                                     required
+                                    aria-required="true"
+                                    aria-describedby={error ? "login-error" : undefined}
                                     className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all sm:text-sm"
                                     placeholder="seu@email.com"
                                     value={email}
@@ -86,6 +91,8 @@ const Login: React.FC = () => {
                                     type="password"
                                     autoComplete="current-password"
                                     required
+                                    aria-required="true"
+                                    aria-describedby={error ? "login-error" : undefined}
                                     className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all sm:text-sm"
                                     placeholder="••••••••"
                                     value={password}
@@ -95,7 +102,12 @@ const Login: React.FC = () => {
                         </div>
 
                         {error && (
-                            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400 text-sm text-center">
+                            <div
+                                id="login-error"
+                                role="alert"
+                                aria-live="polite"
+                                className="p-3 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20 text-red-600 dark:text-red-400 text-sm text-center"
+                            >
                                 {error}
                             </div>
                         )}

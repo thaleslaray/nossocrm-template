@@ -1,12 +1,33 @@
 /**
- * TanStack Query Configuration for FlowCRM
- *
- * Provides:
- * - Server state management
- * - Intelligent caching
- * - Automatic background refetching
- * - Centralized error handling
- * - Optimistic updates
+ * @fileoverview Configuração do TanStack Query para o NossoCRM.
+ * 
+ * Este módulo centraliza toda a configuração de gerenciamento de estado do servidor:
+ * - Cliente e provider do TanStack Query
+ * - Query keys centralizadas para todas as entidades
+ * - Tratamento de erros padronizado
+ * - Hooks customizados para operações comuns
+ * 
+ * ## Funcionalidades
+ * 
+ * - Cache inteligente com stale time de 5 minutos
+ * - Garbage collection após 30 minutos
+ * - Retry automático com backoff exponencial
+ * - Refetch automático em foco/reconexão
+ * - Updates otimistas para UX instantânea
+ * 
+ * @module lib/query
+ * 
+ * @example
+ * ```tsx
+ * // Usando o provider na raiz da aplicação
+ * <QueryProvider>
+ *   <App />
+ * </QueryProvider>
+ * 
+ * // Usando hooks de entidade
+ * const { data: deals } = useDeals({ boardId: 'xxx' });
+ * const createDeal = useCreateDeal();
+ * ```
  */
 import {
   QueryClient,
@@ -21,14 +42,29 @@ import React from 'react';
 import { useNotificationStore } from '@/stores';
 import { ERROR_CODES, getErrorMessage } from '@/lib/validations/errorCodes';
 
-// ============ ERROR HANDLING ============
+// ============ TRATAMENTO DE ERROS ============
 
+/**
+ * Estrutura de erro da API.
+ * 
+ * @interface APIError
+ */
 interface APIError {
+  /** Código do erro. */
   code: string;
+  /** Mensagem do erro. */
   message: string;
+  /** Status HTTP. */
   status?: number;
 }
 
+/**
+ * Handler de erros para queries.
+ * 
+ * Exibe notificação com mensagem apropriada baseada no tipo de erro.
+ * 
+ * @param error - Erro capturado.
+ */
 const handleQueryError = (error: unknown) => {
   const addNotification = useNotificationStore.getState().addNotification;
 
@@ -61,12 +97,28 @@ const handleQueryError = (error: unknown) => {
   });
 };
 
+/**
+ * Handler de erros para mutations.
+ * 
+ * @param error - Erro capturado.
+ * @param _variables - Variáveis da mutation (não utilizado).
+ * @param _context - Contexto da mutation (não utilizado).
+ */
 const handleMutationError = (error: unknown, _variables: unknown, _context: unknown) => {
   handleQueryError(error);
 };
 
 // ============ QUERY CLIENT ============
 
+/**
+ * Cliente TanStack Query configurado para o NossoCRM.
+ * 
+ * Configurações:
+ * - Stale time: 5 minutos
+ * - Cache time: 30 minutos
+ * - Retry: 3x com backoff exponencial
+ * - Refetch automático em foco/reconexão
+ */
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -100,80 +152,85 @@ export const queryClient = new QueryClient({
 
 // ============ PROVIDER ============
 
+/**
+ * Props do QueryProvider.
+ * 
+ * @interface QueryProviderProps
+ */
 interface QueryProviderProps {
+  /** Componentes filhos a serem envolvidos. */
   children: React.ReactNode;
 }
 
+/**
+ * Provider do TanStack Query para a aplicação.
+ * 
+ * Envolve a aplicação com o cliente de query configurado.
+ * Deve ser colocado próximo à raiz da árvore de componentes.
+ * 
+ * @param props - Props do componente.
+ * @returns Componente provider.
+ */
 export const QueryProvider: React.FC<QueryProviderProps> = ({ children }) => {
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 };
 
 // ============ QUERY KEYS ============
-// Centralized query keys for cache management
+/**
+ * Query keys centralizadas para gerenciamento de cache.
+ * 
+ * Usar estas keys garante consistência na invalidação e prefetch.
+ * Pattern: `queryKeys.entity.action(params)`
+ * 
+ * @example
+ * ```typescript
+ * // Invalidar todos os deals
+ * queryClient.invalidateQueries({ queryKey: queryKeys.deals.all });
+ * 
+ * // Invalidar deals de um board específico
+ * queryClient.invalidateQueries({ 
+ *   queryKey: queryKeys.deals.list({ boardId: 'xxx' }) 
+ * });
+ * ```
+ */
+// Re-export queryKeys
+export * from './queryKeys';
+import { queryKeys } from './queryKeys';
 
-export const queryKeys = {
-  // Deals
-  deals: {
-    all: ['deals'] as const,
-    lists: () => [...queryKeys.deals.all, 'list'] as const,
-    list: (filters: Record<string, unknown>) => [...queryKeys.deals.lists(), filters] as const,
-    details: () => [...queryKeys.deals.all, 'detail'] as const,
-    detail: (id: string) => [...queryKeys.deals.details(), id] as const,
-  },
-
-  // Contacts
-  contacts: {
-    all: ['contacts'] as const,
-    lists: () => [...queryKeys.contacts.all, 'list'] as const,
-    list: (filters: Record<string, unknown>) => [...queryKeys.contacts.lists(), filters] as const,
-    details: () => [...queryKeys.contacts.all, 'detail'] as const,
-    detail: (id: string) => [...queryKeys.contacts.details(), id] as const,
-  },
-
-  // Companies
-  companies: {
-    all: ['companies'] as const,
-    lists: () => [...queryKeys.companies.all, 'list'] as const,
-    list: (filters: Record<string, unknown>) => [...queryKeys.companies.lists(), filters] as const,
-    details: () => [...queryKeys.companies.all, 'detail'] as const,
-    detail: (id: string) => [...queryKeys.companies.details(), id] as const,
-  },
-
-  // Activities
-  activities: {
-    all: ['activities'] as const,
-    lists: () => [...queryKeys.activities.all, 'list'] as const,
-    list: (filters: Record<string, unknown>) => [...queryKeys.activities.lists(), filters] as const,
-    byDeal: (dealId: string) => [...queryKeys.activities.all, 'deal', dealId] as const,
-  },
-
-  // Boards
-  boards: {
-    all: ['boards'] as const,
-    lists: () => [...queryKeys.boards.all, 'list'] as const,
-    details: () => [...queryKeys.boards.all, 'detail'] as const,
-    detail: (id: string) => [...queryKeys.boards.details(), id] as const,
-  },
-
-  // Dashboard
-  dashboard: {
-    stats: ['dashboard', 'stats'] as const,
-    funnel: ['dashboard', 'funnel'] as const,
-    timeline: ['dashboard', 'timeline'] as const,
-  },
-};
-
-// ============ CUSTOM HOOKS ============
-// These will be used when we have a real API
+// ============ HOOKS CUSTOMIZADOS ============
 
 /**
- * Hook for optimistic updates on mutations
+ * Hook para mutations com atualizações otimistas.
+ * 
+ * Fornece UX instantânea ao atualizar o cache antes da resposta do servidor.
+ * Em caso de erro, faz rollback automático para o estado anterior.
+ * 
+ * @template TData Tipo dos dados retornados.
+ * @template TVariables Tipo das variáveis da mutation.
+ * @template TContext Tipo do contexto da mutation.
+ * @param options - Configurações da mutation.
+ * @returns Mutation configurada com updates otimistas.
+ * 
+ * @example
+ * ```typescript
+ * const updateDeal = useOptimisticMutation({
+ *   mutationFn: (deal) => dealsService.update(deal.id, deal),
+ *   queryKey: queryKeys.deals.all,
+ *   optimisticUpdate: (old, newDeal) => 
+ *     old?.map(d => d.id === newDeal.id ? { ...d, ...newDeal } : d) || [],
+ * });
+ * ```
  */
 export const useOptimisticMutation = <TData, TVariables, TContext>(options: {
+  /** Função de mutation a ser executada. */
   mutationFn: (variables: TVariables) => Promise<TData>;
+  /** Query key para invalidação. */
   queryKey: readonly unknown[];
+  /** Função para atualizar otimisticamente o cache. */
   optimisticUpdate: (oldData: TData | undefined, variables: TVariables) => TData;
+  /** Callback de sucesso. */
   onSuccess?: (data: TData, variables: TVariables, context: TContext) => void;
+  /** Callback de erro. */
   onError?: (error: Error, variables: TVariables, context: TContext | undefined) => void;
 }) => {
   const queryClient = useQueryClient();
@@ -215,7 +272,19 @@ export const useOptimisticMutation = <TData, TVariables, TContext>(options: {
 // ============ PREFETCH HELPERS ============
 
 /**
- * Prefetch data for a route before navigation
+ * Pré-carrega dados para uma rota antes da navegação.
+ * 
+ * Melhora a percepção de velocidade ao carregar dados antecipadamente.
+ * 
+ * @param route - Nome da rota a ser pré-carregada.
+ * 
+ * @example
+ * ```typescript
+ * // No hover de um link de navegação
+ * <Link onMouseEnter={() => prefetchRouteData('contacts')}>
+ *   Contatos
+ * </Link>
+ * ```
  */
 export const prefetchRouteData = async (route: string) => {
   switch (route) {

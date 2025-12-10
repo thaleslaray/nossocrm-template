@@ -6,14 +6,17 @@
  * - Optimistic updates for instant UI feedback
  * - Automatic cache invalidation
  */
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { queryKeys } from '../index';
 import { contactsService, companiesService } from '@/lib/supabase';
-import type { Contact, ContactStage, Company } from '@/types';
+import { useAuth } from '@/context/AuthContext';
+import type { Contact, ContactStage, Company, PaginationState, PaginatedResponse, ContactsServerFilters } from '@/types';
 
 // ============ QUERY HOOKS ============
 
 export interface ContactsFilters {
+  clientCompanyId?: string;
+  /** @deprecated Use clientCompanyId instead */
   companyId?: string;
   stage?: ContactStage | string;
   status?: 'ACTIVE' | 'INACTIVE';
@@ -22,8 +25,11 @@ export interface ContactsFilters {
 
 /**
  * Hook to fetch all contacts with optional filters
+ * Waits for auth to be ready before fetching to ensure RLS works correctly
  */
 export const useContacts = (filters?: ContactsFilters) => {
+  const { user, loading: authLoading } = useAuth();
+
   return useQuery({
     queryKey: filters
       ? queryKeys.contacts.list(filters as Record<string, unknown>)
@@ -37,13 +43,15 @@ export const useContacts = (filters?: ContactsFilters) => {
       // Apply client-side filters
       if (filters) {
         contacts = contacts.filter(contact => {
-          if (filters.companyId && contact.companyId !== filters.companyId) return false;
+          // Support both clientCompanyId and deprecated companyId
+          const filterCompanyId = filters.clientCompanyId || filters.companyId;
+          if (filterCompanyId && contact.clientCompanyId !== filterCompanyId && contact.companyId !== filterCompanyId) return false;
           if (filters.stage && contact.stage !== filters.stage) return false;
           if (filters.status && contact.status !== filters.status) return false;
           if (filters.search) {
             const search = filters.search.toLowerCase();
-            const matchName = contact.name.toLowerCase().includes(search);
-            const matchEmail = contact.email.toLowerCase().includes(search);
+            const matchName = (contact.name || '').toLowerCase().includes(search);
+            const matchEmail = (contact.email || '').toLowerCase().includes(search);
             if (!matchName && !matchEmail) return false;
           }
           return true;
@@ -53,6 +61,7 @@ export const useContacts = (filters?: ContactsFilters) => {
       return contacts;
     },
     staleTime: 2 * 60 * 1000,
+    enabled: !authLoading && !!user, // Only fetch when auth is ready
   });
 };
 
@@ -72,15 +81,15 @@ export const useContact = (id: string | undefined) => {
 };
 
 /**
- * Hook to fetch contacts by company
+ * Hook to fetch contacts by company (CRM client company)
  */
-export const useContactsByCompany = (companyId: string) => {
+export const useContactsByCompany = (clientCompanyId: string) => {
   return useQuery({
-    queryKey: queryKeys.contacts.list({ companyId }),
+    queryKey: queryKeys.contacts.list({ clientCompanyId }),
     queryFn: async () => {
       const { data, error } = await contactsService.getAll();
       if (error) throw error;
-      return (data || []).filter(c => c.companyId === companyId);
+      return (data || []).filter(c => c.clientCompanyId === clientCompanyId || c.companyId === clientCompanyId);
     },
   });
 };
@@ -96,6 +105,64 @@ export const useLeadContacts = () => {
       if (error) throw error;
       return (data || []).filter(c => c.stage === 'LEAD');
     },
+  });
+};
+
+/**
+ * Hook to fetch paginated contacts with server-side filters.
+ * Uses keepPreviousData for smooth UX during page transitions.
+ * 
+ * @param pagination - Pagination state { pageIndex, pageSize }
+ * @param filters - Optional server-side filters (search, stage, status, dateRange)
+ * @returns Query result with paginated data
+ * 
+ * @example
+ * ```tsx
+ * const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
+ * const { data, isFetching, isPlaceholderData } = useContactsPaginated(pagination, { stage: 'LEAD' });
+ * 
+ * // data.data = Contact[]
+ * // data.totalCount = 10000
+ * // data.hasMore = true
+ * ```
+ */
+export const useContactsPaginated = (
+  pagination: PaginationState,
+  filters?: ContactsServerFilters
+) => {
+  return useQuery({
+    queryKey: queryKeys.contacts.paginated(pagination, filters),
+    queryFn: async () => {
+      const { data, error } = await contactsService.getAllPaginated(pagination, filters);
+      if (error) throw error;
+      return data!;
+    },
+    placeholderData: keepPreviousData,
+    staleTime: 2 * 60 * 1000, // 2 minutes
+  });
+};
+
+/**
+ * Hook to fetch contact counts by stage (funnel).
+ * Uses server-side RPC for efficient counting across all contacts.
+ * 
+ * @returns Query result with stage counts object
+ * 
+ * @example
+ * ```tsx
+ * const { data: stageCounts } = useContactStageCounts();
+ * // stageCounts = { LEAD: 1500, MQL: 2041, PROSPECT: 800, ... }
+ * ```
+ */
+export const useContactStageCounts = () => {
+  return useQuery({
+    queryKey: queryKeys.contacts.stageCounts(),
+    queryFn: async () => {
+      const { data, error } = await contactsService.getStageCounts();
+      if (error) throw error;
+      return data || {};
+    },
+    staleTime: 30 * 1000, // 30 seconds - counts can be slightly stale
   });
 };
 
@@ -124,8 +191,8 @@ export const useCreateContact = () => {
 
   return useMutation({
     mutationFn: async (contact: Omit<Contact, 'id' | 'createdAt'>) => {
-      // company_id will be auto-set by trigger
-      const { data, error } = await contactsService.create(contact, '');
+      // organization_id will be auto-set by trigger
+      const { data, error } = await contactsService.create(contact);
       if (error) throw error;
       return data!;
     },
@@ -281,7 +348,7 @@ export const useCreateCompany = () => {
 
   return useMutation({
     mutationFn: async (company: Omit<Company, 'id' | 'createdAt'>) => {
-      const { data, error } = await companiesService.create(company, '');
+      const { data, error } = await companiesService.create(company);
       if (error) throw error;
       return data!;
     },

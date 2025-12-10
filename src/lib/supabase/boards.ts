@@ -1,55 +1,134 @@
+/**
+ * @fileoverview Serviço Supabase para gerenciamento de boards (pipelines kanban).
+ * 
+ * Este módulo fornece operações CRUD para boards e seus estágios,
+ * incluindo ordenação, metas e personas de agente de IA.
+ * 
+ * ## Conceitos de Board
+ * 
+ * - Board = Pipeline (ex: "Vendas B2B", "Onboarding de Clientes")
+ * - Stage = Coluna do kanban (ex: "Qualificação", "Proposta", "Fechado")
+ * - Cada board pode ter metas (goal), persona de IA e gatilhos de automação
+ * 
+ * @module lib/supabase/boards
+ */
+
 import { supabase } from './client';
-import { Board, BoardStage, BoardGoal, AgentPersona } from '@/types';
+import { Board, BoardStage, BoardGoal, AgentPersona, OrganizationId } from '@/types';
 import { sanitizeUUID, requireUUID } from './utils';
 
 // ============================================
 // BOARDS SERVICE
 // ============================================
 
+/**
+ * Representação de board no banco de dados.
+ * 
+ * @interface DbBoard
+ */
 export interface DbBoard {
+  /** ID único do board (UUID). */
   id: string;
+  /** ID da organização/tenant. */
+  organization_id: string;
+  /** Nome do board. */
   name: string;
+  /** Descrição do propósito. */
   description: string | null;
+  /** Se é o board padrão. */
   is_default: boolean;
+  /** Template base usado. */
   template: string | null;
+  /** Estágio de lifecycle vinculado. */
   linked_lifecycle_stage: string | null;
+  /** ID do próximo board na jornada. */
   next_board_id: string | null;
+  /** ID do estágio de Ganho (Win). */
+  won_stage_id: string | null;
+  /** ID do estágio de Perda (Lost). */
+  lost_stage_id: string | null;
+  /** Se deve manter no estágio ao ganhar (true) ou mover (false/null). */
+  won_stay_in_stage: boolean | null;
+  /** Se deve manter no estágio ao perder (true) ou mover (false/null). */
+  lost_stay_in_stage: boolean | null;
+  /** Descrição da meta. */
   goal_description: string | null;
+  /** KPI principal. */
   goal_kpi: string | null;
+  /** Valor alvo do KPI. */
   goal_target_value: string | null;
+  /** Tipo da meta (currency, percentage, count). */
   goal_type: string | null;
+  /** Nome do agente de IA. */
   agent_name: string | null;
+  /** Papel/função do agente. */
   agent_role: string | null;
+  /** Comportamento do agente. */
   agent_behavior: string | null;
+  /** Gatilho de entrada de novos itens. */
   entry_trigger: string | null;
+  /** Sugestões de automação. */
   automation_suggestions: string[] | null;
+  /** Posição na lista de boards. */
   position: number;
+  /** Data de criação. */
   created_at: string;
+  /** Data de atualização. */
   updated_at: string;
+  /** ID do dono/responsável. */
   owner_id: string | null;
 }
 
+/**
+ * Representação de estágio de board no banco de dados.
+ * 
+ * @interface DbBoardStage
+ */
 export interface DbBoardStage {
+  /** ID único do estágio (UUID). */
   id: string;
+  /** ID da organização/tenant. */
+  organization_id: string;
+  /** ID do board pai. */
   board_id: string;
+  /** Nome interno do estágio. */
   name: string;
+  /** Label exibido na UI. */
   label: string | null;
+  /** Cor do estágio (classe Tailwind). */
   color: string | null;
+  /** Ordem de exibição. */
   order: number;
+  /** Se é estágio padrão. */
   is_default: boolean;
+  /** Estágio de lifecycle vinculado. */
   linked_lifecycle_stage: string | null;
+  /** Data de criação. */
   created_at: string;
 }
 
-// Transform DB Stage -> App Stage
+/**
+ * Transforma estágio do formato DB para o formato da aplicação.
+ * 
+ * @param db - Estágio no formato do banco.
+ * @returns Estágio no formato da aplicação.
+ */
 const transformStage = (db: DbBoardStage): BoardStage => ({
   id: db.id,
+  organizationId: db.organization_id,
+  boardId: db.board_id,
   label: db.label || db.name, // label pode ser null, usar name como fallback
   color: db.color || 'bg-gray-500',
   linkedLifecycleStage: db.linked_lifecycle_stage || undefined,
 });
 
-// Transform DB -> App
+/**
+ * Transforma board do formato DB para o formato da aplicação.
+ * 
+ * @param db - Board no formato do banco.
+ * @param stages - Estágios no formato do banco.
+ * @returns Board no formato da aplicação.
+ */
 const transformBoard = (db: DbBoard, stages: DbBoardStage[]): Board => {
   const goal: BoardGoal | undefined = db.goal_description ? {
     description: db.goal_description,
@@ -66,12 +145,17 @@ const transformBoard = (db: DbBoard, stages: DbBoardStage[]): Board => {
 
   return {
     id: db.id,
+    organizationId: db.organization_id,
     name: db.name,
     description: db.description || undefined,
     isDefault: db.is_default,
     template: (db.template as Board['template']) || undefined,
     linkedLifecycleStage: db.linked_lifecycle_stage || undefined,
     nextBoardId: db.next_board_id || undefined,
+    wonStageId: db.won_stage_id || undefined,
+    lostStageId: db.lost_stage_id || undefined,
+    wonStayInStage: db.won_stay_in_stage || false,
+    lostStayInStage: db.lost_stay_in_stage || false,
     goal,
     agentPersona,
     entryTrigger: db.entry_trigger || undefined,
@@ -84,7 +168,13 @@ const transformBoard = (db: DbBoard, stages: DbBoardStage[]): Board => {
   };
 };
 
-// Transform App -> DB
+/**
+ * Transforma board do formato da aplicação para o formato DB.
+ * 
+ * @param board - Board no formato da aplicação.
+ * @param order - Posição na lista (opcional).
+ * @returns Board parcial no formato do banco.
+ */
 const transformToDb = (board: Omit<Board, 'id' | 'createdAt'>, order?: number): Partial<DbBoard> => ({
   name: board.name,
   description: board.description || null,
@@ -92,6 +182,10 @@ const transformToDb = (board: Omit<Board, 'id' | 'createdAt'>, order?: number): 
   template: board.template || null,
   linked_lifecycle_stage: board.linkedLifecycleStage || null,
   next_board_id: sanitizeUUID(board.nextBoardId),
+  won_stage_id: sanitizeUUID(board.wonStageId),
+  lost_stage_id: sanitizeUUID(board.lostStageId),
+  won_stay_in_stage: board.wonStayInStage || false,
+  lost_stay_in_stage: board.lostStayInStage || false,
   goal_description: board.goal?.description || null,
   goal_kpi: board.goal?.kpi || null,
   goal_target_value: board.goal?.targetValue || null,
@@ -104,7 +198,14 @@ const transformToDb = (board: Omit<Board, 'id' | 'createdAt'>, order?: number): 
   position: order ?? 0,
 });
 
-// Transform App Stage -> DB Stage
+/**
+ * Transforma estágio do formato da aplicação para o formato DB.
+ * 
+ * @param stage - Estágio no formato da aplicação.
+ * @param boardId - ID do board pai.
+ * @param orderNum - Posição na lista.
+ * @returns Estágio parcial no formato do banco.
+ */
 const transformStageToDb = (stage: BoardStage, boardId: string, orderNum: number): Partial<DbBoardStage> => ({
   board_id: boardId,
   name: stage.label,
@@ -114,7 +215,29 @@ const transformStageToDb = (stage: BoardStage, boardId: string, orderNum: number
   linked_lifecycle_stage: stage.linkedLifecycleStage || null,
 });
 
+/**
+ * Serviço de boards do Supabase.
+ * 
+ * Fornece operações CRUD para as tabelas `boards` e `board_stages`.
+ * 
+ * @example
+ * ```typescript
+ * // Buscar todos os boards
+ * const { data, error } = await boardsService.getAll();
+ * 
+ * // Criar um novo board
+ * const { data, error } = await boardsService.create(
+ *   { name: 'Vendas B2B', stages: [...] },
+ *   organizationId
+ * );
+ * ```
+ */
 export const boardsService = {
+  /**
+   * Busca todos os boards da organização com seus estágios.
+   * 
+   * @returns Promise com array de boards ou erro.
+   */
   async getAll(): Promise<{ data: Board[] | null; error: Error | null }> {
     try {
       const [boardsResult, stagesResult] = await Promise.all([
@@ -125,7 +248,7 @@ export const boardsService = {
       if (boardsResult.error) return { data: null, error: boardsResult.error };
       if (stagesResult.error) return { data: null, error: stagesResult.error };
 
-      const boards = (boardsResult.data || []).map(b => 
+      const boards = (boardsResult.data || []).map(b =>
         transformBoard(b as DbBoard, stagesResult.data as DbBoardStage[])
       );
 
@@ -135,11 +258,43 @@ export const boardsService = {
     }
   },
 
-  async create(board: Omit<Board, 'id' | 'createdAt'>, companyId: string, order?: number): Promise<{ data: Board | null; error: Error | null }> {
+  /**
+   * Busca um board específico pelo ID.
+   */
+  async get(id: string): Promise<Board | null> {
     try {
-      // Validar company_id obrigatório
-      const validCompanyId = requireUUID(companyId, 'company_id');
+      if (!id) return null;
 
+      const { data: boardData, error: boardError } = await supabase
+        .from('boards')
+        .select('*')
+        .eq('id', id)
+        .single();
+
+      if (boardError || !boardData) return null;
+
+      const { data: stagesData } = await supabase
+        .from('board_stages')
+        .select('*')
+        .eq('board_id', id)
+        .order('order');
+
+      return transformBoard(boardData as DbBoard, (stagesData || []) as DbBoardStage[]);
+    } catch (e) {
+      console.error('Error fetching board:', e);
+      return null;
+    }
+  },
+
+  /**
+   * Cria um novo board com seus estágios.
+   * 
+   * @param board - Dados do board (sem id e createdAt).
+   * @param order - Posição na lista (opcional, calculada se não informada).
+   * @returns Promise com board criado ou erro.
+   */
+  async create(board: Omit<Board, 'id' | 'createdAt'>, order?: number): Promise<{ data: Board | null; error: Error | null }> {
+    try {
       // Get next order if not provided
       let boardOrder = order;
       if (boardOrder === undefined) {
@@ -154,7 +309,9 @@ export const boardsService = {
       // 1. Create board
       const boardData = {
         ...transformToDb(board, boardOrder),
-        company_id: validCompanyId,
+        // For won/lost stages, we can't save them yet because stages don't exist
+        won_stage_id: null,
+        lost_stage_id: null,
       };
 
       const { data: newBoard, error: boardError } = await supabase
@@ -168,56 +325,97 @@ export const boardsService = {
         return { data: null, error: boardError };
       }
 
-      // 2. Create stages
+      // 2. Create stages and track ID mapping
       const stagesToInsert = (board.stages || []).map((stage, index) => ({
         ...transformStageToDb(stage, newBoard.id, index),
-        company_id: validCompanyId,
       }));
 
+      // Store fetched stages after insert to map IDs
+      let insertedStages: DbBoardStage[] = [];
+
       if (stagesToInsert.length > 0) {
-        const { error: stagesError } = await supabase
+        const { data: stagesData, error: stagesError } = await supabase
           .from('board_stages')
-          .insert(stagesToInsert);
+          .insert(stagesToInsert)
+          .select();
 
         if (stagesError) return { data: null, error: stagesError };
+        insertedStages = stagesData as DbBoardStage[];
       }
 
-      // 3. Fetch complete board with stages
-      const { data: stages } = await supabase
-        .from('board_stages')
-        .select('*')
-        .eq('board_id', newBoard.id)
-        .order('order');
+      // 3. Update won/lost stage IDs if necessary
+      if (board.wonStageId || board.lostStageId) {
+        // Map: Frontend ID (from `board.stages[i].id`) -> Backend ID (`insertedStages[i].id`)
+        // Prerequisite: order is preserved in `insert` and `select` implies we need robust mapping.
+        // `insert` with multiple values returns rows in random order? Postgres usually preserves order for batch insert but it's not guaranteed by SQL standard.
+        // Safer way: match by index if names are unique? Unreliable.
+        // Wait, `insertedStages` from Supabase comes back.
+        // Let's assume order is preserved for now (common practice), or strictly we should match logic.
+        // Actually, matching by index is the best bet here since we just inserted them.
 
-      return { 
-        data: transformBoard(newBoard as DbBoard, (stages || []) as DbBoardStage[]), 
-        error: null 
+        let realWonStageId = null;
+        let realLostStageId = null;
+
+        if (board.stages && insertedStages.length === board.stages.length) {
+          // Re-sort inserted stages by order to match input order
+          const sortedInserted = [...insertedStages].sort((a, b) => a.order - b.order);
+          const sortedInput = [...board.stages]; // Assuming they came in ordered or we iterate by index
+
+          const wonIndex = sortedInput.findIndex(s => s.id === board.wonStageId);
+          if (wonIndex >= 0) realWonStageId = sortedInserted[wonIndex].id;
+
+          const lostIndex = sortedInput.findIndex(s => s.id === board.lostStageId);
+          if (lostIndex >= 0) realLostStageId = sortedInserted[lostIndex].id;
+        }
+
+        if (realWonStageId || realLostStageId) {
+          await supabase.from('boards').update({
+            won_stage_id: realWonStageId,
+            lost_stage_id: realLostStageId
+          }).eq('id', newBoard.id);
+
+          // Update the local newBoard object to reflect this for response
+          if (realWonStageId) (newBoard as DbBoard).won_stage_id = realWonStageId;
+          if (realLostStageId) (newBoard as DbBoard).lost_stage_id = realLostStageId;
+        }
+      }
+
+      // 4. Return complete board
+      // Use the inserted stages directly
+      return {
+        data: transformBoard(newBoard as DbBoard, insertedStages),
+        error: null
       };
     } catch (e) {
       return { data: null, error: e as Error };
     }
   },
 
-  async update(id: string, updates: Partial<Board>, companyId?: string): Promise<{ error: Error | null }> {
+  async update(id: string, updates: Partial<Board>): Promise<{ error: Error | null }> {
     try {
       const dbUpdates: Partial<DbBoard> = {};
-      
+
       if (updates.name !== undefined) dbUpdates.name = updates.name;
       if (updates.description !== undefined) dbUpdates.description = updates.description || null;
       if (updates.isDefault !== undefined) dbUpdates.is_default = updates.isDefault;
       if (updates.template !== undefined) dbUpdates.template = updates.template || null;
       if (updates.linkedLifecycleStage !== undefined) dbUpdates.linked_lifecycle_stage = updates.linkedLifecycleStage || null;
       if (updates.nextBoardId !== undefined) dbUpdates.next_board_id = updates.nextBoardId || null;
+      if (updates.wonStageId !== undefined) dbUpdates.won_stage_id = updates.wonStageId || null;
+      if (updates.lostStageId !== undefined) dbUpdates.lost_stage_id = updates.lostStageId || null;
+      if (updates.wonStayInStage !== undefined) dbUpdates.won_stay_in_stage = updates.wonStayInStage;
+      if (updates.lostStayInStage !== undefined) dbUpdates.lost_stay_in_stage = updates.lostStayInStage;
       if (updates.entryTrigger !== undefined) dbUpdates.entry_trigger = updates.entryTrigger || null;
       if (updates.automationSuggestions !== undefined) dbUpdates.automation_suggestions = updates.automationSuggestions || null;
-      
+
+
       if (updates.goal !== undefined) {
         dbUpdates.goal_description = updates.goal?.description || null;
         dbUpdates.goal_kpi = updates.goal?.kpi || null;
         dbUpdates.goal_target_value = updates.goal?.targetValue || null;
         dbUpdates.goal_type = updates.goal?.type || null;
       }
-      
+
       if (updates.agentPersona !== undefined) {
         dbUpdates.agent_name = updates.agentPersona?.name || null;
         dbUpdates.agent_role = updates.agentPersona?.role || null;
@@ -234,24 +432,40 @@ export const boardsService = {
       if (error) return { error };
 
       // Update stages if provided
-      if (updates.stages && companyId) {
-        const validCompanyId = requireUUID(companyId, 'company_id');
-        
-        // Delete existing stages
-        await supabase.from('board_stages').delete().eq('board_id', id);
-        
-        // Insert new stages
-        const stagesToInsert = updates.stages.map((stage, index) => ({
+      // Update stages if provided
+      if (updates.stages) {
+        // 1. Upsert provided stages (Update existing + Insert new)
+        // We MUST include the ID to update existing records
+        const stagesToUpsert = updates.stages.map((stage, index) => ({
           ...transformStageToDb(stage, id, index),
-          company_id: validCompanyId,
+          id: stage.id,
         }));
 
-        if (stagesToInsert.length > 0) {
-          const { error: stagesError } = await supabase
-            .from('board_stages')
-            .insert(stagesToInsert);
+        const { error: upsertError } = await supabase
+          .from('board_stages')
+          .upsert(stagesToUpsert);
 
-          if (stagesError) return { error: stagesError };
+        if (upsertError) return { error: upsertError };
+
+        // 2. Delete removed stages
+        // Delete any stage belonging to this board that is NOT in the new list
+        const currentStageIds = updates.stages.map(s => s.id);
+
+        // Safety check: ensure we have at least one stage (should shouldn't force delete all if empty list passed by mistake)
+        if (currentStageIds.length > 0) {
+          const { error: deleteError } = await supabase
+            .from('board_stages')
+            .delete()
+            .eq('board_id', id)
+            .not('id', 'in', `(${currentStageIds.join(',')})`);
+
+          // If deletion fails (e.g. FK constraint because stage has deals), 
+          // we treat it as a partial success/warning but don't block the update.
+          // Ideally we would notify the user "Some stages could not be deleted".
+          if (deleteError) {
+            console.warn('Could not delete some removed stages (likely due to existing deals):', deleteError);
+            // We allow this to pass so the other updates (name, settings) are preserved.
+          }
         }
       }
 
@@ -364,8 +578,8 @@ export const boardsService = {
         .order('order', { ascending: false })
         .limit(1);
 
-      const nextOrder = existingStages && existingStages.length > 0 
-        ? existingStages[0].order + 1 
+      const nextOrder = existingStages && existingStages.length > 0
+        ? existingStages[0].order + 1
         : 0;
 
       const { data, error } = await supabase
@@ -391,7 +605,7 @@ export const boardsService = {
   async updateStage(stageId: string, updates: Partial<BoardStage>): Promise<{ error: Error | null }> {
     try {
       const dbUpdates: Partial<DbBoardStage> = {};
-      
+
       if (updates.label !== undefined) dbUpdates.label = updates.label;
       if (updates.color !== undefined) dbUpdates.color = updates.color;
       if (updates.linkedLifecycleStage !== undefined) {
@@ -422,10 +636,10 @@ export const boardsService = {
       }
 
       if (count && count > 0) {
-        return { 
+        return {
           error: new Error(
             `Não é possível excluir este estágio. Existem ${count} deal(s) nele. Mova os deals para outro estágio primeiro.`
-          ) 
+          )
         };
       }
 
@@ -452,7 +666,7 @@ export const boardStagesService = {
         .from('board_stages')
         .select('*')
         .order('order', { ascending: true });
-      
+
       return { data: data as DbBoardStage[] | null, error };
     } catch (e) {
       return { data: null, error: e as Error };
@@ -462,12 +676,17 @@ export const boardStagesService = {
   /** Busca stages de um board específico */
   async getByBoardId(boardId: string): Promise<{ data: DbBoardStage[] | null; error: Error | null }> {
     try {
+      // Guard: return empty array if boardId is empty/invalid
+      if (!boardId || boardId.trim() === '') {
+        return { data: [], error: null };
+      }
+
       const { data, error } = await supabase
         .from('board_stages')
         .select('*')
         .eq('board_id', boardId)
         .order('order', { ascending: true });
-      
+
       return { data: data as DbBoardStage[] | null, error };
     } catch (e) {
       return { data: null, error: e as Error };

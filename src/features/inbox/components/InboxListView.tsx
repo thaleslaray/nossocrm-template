@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Activity } from '@/types';
 import { AISuggestion } from '../hooks/useInboxController';
 import { InboxSection } from './InboxSection';
@@ -9,7 +10,7 @@ import {
   AlertTriangle,
   Gift,
   TrendingUp,
-  Check,
+  ExternalLink,
   X,
   Clock,
 } from 'lucide-react';
@@ -33,6 +34,7 @@ interface InboxListViewProps {
   onAcceptSuggestion: (suggestion: AISuggestion) => void;
   onDismissSuggestion: (id: string) => void;
   onSnoozeSuggestion: (id: string) => void;
+  onSelectActivity: (id: string) => void;
 }
 
 // Componente de Sugestão Simplificado (linha única)
@@ -42,6 +44,8 @@ const SuggestionRow: React.FC<{
   onDismiss: () => void;
   onSnooze: () => void;
 }> = ({ suggestion, onAccept, onDismiss, onSnooze }) => {
+  const navigate = useNavigate();
+
   const getIcon = () => {
     switch (suggestion.type) {
       case 'STALLED':
@@ -56,16 +60,31 @@ const SuggestionRow: React.FC<{
   };
 
   const value = suggestion.data.deal?.value;
+  const dealId = suggestion.data.deal?.id;
+  const contactId = suggestion.data.contact?.id;
+
+  // Navigate to deal or contact
+  const handleNavigate = () => {
+    if (dealId) {
+      navigate(`/pipeline?deal=${dealId}`);
+    } else if (contactId) {
+      navigate(`/contacts?contactId=${contactId}`);
+    }
+  };
 
   return (
     <div className="group flex items-center gap-3 py-3 px-4 hover:bg-slate-50 dark:hover:bg-white/5 rounded-lg transition-colors">
       <div className="shrink-0">{getIcon()}</div>
 
-      <div className="flex-1 min-w-0">
-        <p className="text-sm text-slate-700 dark:text-slate-200 truncate">
+      {/* Clickable area for navigation */}
+      <button
+        onClick={handleNavigate}
+        className="flex-1 min-w-0 text-left hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+      >
+        <p className="text-sm text-slate-700 dark:text-slate-200 truncate group-hover:text-primary-600 dark:group-hover:text-primary-400">
           {suggestion.description}
         </p>
-      </div>
+      </button>
 
       {value && (
         <span className="shrink-0 text-sm font-medium text-green-600 dark:text-green-400">
@@ -78,23 +97,26 @@ const SuggestionRow: React.FC<{
         <button
           onClick={onSnooze}
           className="p-1.5 text-slate-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-500/10 rounded-md transition-colors"
+          aria-label="Adiar sugestão"
           title="Adiar"
         >
-          <Clock size={14} />
+          <Clock size={14} aria-hidden="true" />
         </button>
         <button
           onClick={onDismiss}
           className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-md transition-colors"
+          aria-label="Descartar sugestão"
           title="Descartar"
         >
-          <X size={14} />
+          <X size={14} aria-hidden="true" />
         </button>
         <button
-          onClick={onAccept}
-          className="p-1.5 text-slate-400 hover:text-green-500 hover:bg-green-50 dark:hover:bg-green-500/10 rounded-md transition-colors"
-          title="Aceitar"
+          onClick={handleNavigate}
+          className="p-1.5 text-slate-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-md transition-colors"
+          aria-label="Ver negócio"
+          title="Ver negócio"
         >
-          <Check size={14} />
+          <ExternalLink size={14} aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -102,6 +124,8 @@ const SuggestionRow: React.FC<{
 };
 
 // Card de Sugestões IA Colapsável
+const MAX_SUGGESTIONS = 5;
+
 const AISuggestionsCard: React.FC<{
   suggestions: AISuggestion[];
   onAccept: (suggestion: AISuggestion) => void;
@@ -109,8 +133,12 @@ const AISuggestionsCard: React.FC<{
   onSnooze: (id: string) => void;
 }> = ({ suggestions, onAccept, onDismiss, onSnooze }) => {
   const [isOpen, setIsOpen] = useState(true);
+  const [showAll, setShowAll] = useState(false);
 
   if (suggestions.length === 0) return null;
+
+  const visibleSuggestions = showAll ? suggestions : suggestions.slice(0, MAX_SUGGESTIONS);
+  const hasMore = suggestions.length > MAX_SUGGESTIONS;
 
   return (
     <div className="mb-6 border border-primary-200 dark:border-primary-500/20 rounded-xl overflow-hidden bg-primary-50/50 dark:bg-primary-500/5">
@@ -135,7 +163,7 @@ const AISuggestionsCard: React.FC<{
 
       {isOpen && (
         <div className="border-t border-primary-200 dark:border-primary-500/20 divide-y divide-primary-100 dark:divide-primary-500/10">
-          {suggestions.map(suggestion => (
+          {visibleSuggestions.map(suggestion => (
             <SuggestionRow
               key={suggestion.id}
               suggestion={suggestion}
@@ -144,6 +172,24 @@ const AISuggestionsCard: React.FC<{
               onSnooze={() => onSnooze(suggestion.id)}
             />
           ))}
+
+          {hasMore && !showAll && (
+            <button
+              onClick={() => setShowAll(true)}
+              className="w-full py-3 px-4 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-100/50 dark:hover:bg-primary-500/10 transition-colors"
+            >
+              Ver todas as {suggestions.length} sugestões
+            </button>
+          )}
+
+          {showAll && hasMore && (
+            <button
+              onClick={() => setShowAll(false)}
+              className="w-full py-3 px-4 text-sm font-medium text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-white/5 transition-colors"
+            >
+              Mostrar menos
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -162,6 +208,7 @@ export const InboxListView: React.FC<InboxListViewProps> = ({
   onAcceptSuggestion,
   onDismissSuggestion,
   onSnoozeSuggestion,
+  onSelectActivity,
 }) => {
   return (
     <div className="space-y-6">
@@ -179,9 +226,11 @@ export const InboxListView: React.FC<InboxListViewProps> = ({
           title="Atrasados"
           activities={overdueActivities}
           color="red"
+          filterParam="overdue"
           onToggleComplete={onCompleteActivity}
           onSnooze={onSnoozeActivity}
           onDiscard={onDiscardActivity}
+          onSelect={onSelectActivity}
         />
 
         {/* Hoje separado: Reuniões vs Tarefas */}
@@ -189,28 +238,34 @@ export const InboxListView: React.FC<InboxListViewProps> = ({
           title="Reuniões Hoje"
           activities={todayMeetings}
           color="green"
+          filterParam="today"
           onToggleComplete={onCompleteActivity}
           onSnooze={onSnoozeActivity}
           onDiscard={onDiscardActivity}
+          onSelect={onSelectActivity}
         />
 
         <InboxSection
           title="Tarefas Hoje"
           activities={todayTasks}
           color="green"
+          filterParam="today"
           onToggleComplete={onCompleteActivity}
           onSnooze={onSnoozeActivity}
           onDiscard={onDiscardActivity}
+          onSelect={onSelectActivity}
         />
 
         <InboxSection
           title="Próximos"
           activities={upcomingActivities}
           color="slate"
+          filterParam="upcoming"
           defaultOpen={false}
           onToggleComplete={onCompleteActivity}
           onSnooze={onSnoozeActivity}
           onDiscard={onDiscardActivity}
+          onSelect={onSelectActivity}
         />
       </div>
     </div>

@@ -22,30 +22,30 @@ export const RevenueTrendChart: React.FC<RevenueTrendChartProps> = ({ data }) =>
           <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0} />
         </linearGradient>
       </defs>
-      <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.1)" vertical={false} />
+      <CartesianGrid strokeDasharray="3 3" stroke="var(--chart-grid)" vertical={false} />
       <XAxis
         dataKey="month"
         axisLine={false}
         tickLine={false}
-        tick={{ fill: '#64748b', fontSize: 12 }}
+        tick={{ fill: 'var(--chart-text)', fontSize: 12 }}
         dy={10}
       />
       <YAxis
         axisLine={false}
         tickLine={false}
-        tick={{ fill: '#64748b', fontSize: 12 }}
+        tick={{ fill: 'var(--chart-text)', fontSize: 12 }}
         tickFormatter={value => `$${value / 1000}k`}
       />
       <Tooltip
         contentStyle={{
-          backgroundColor: '#0f172a',
-          border: '1px solid rgba(255,255,255,0.1)',
+          backgroundColor: 'var(--chart-tooltip-bg)',
+          border: '1px solid var(--chart-tooltip-border)',
           borderRadius: '12px',
-          color: '#fff',
+          color: 'var(--chart-tooltip-text)',
           boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
         }}
         itemStyle={{ color: '#bae6fd' }}
-        labelStyle={{ color: '#94a3b8' }}
+        labelStyle={{ color: 'var(--chart-text)' }}
       />
       <Area
         type="monotone"

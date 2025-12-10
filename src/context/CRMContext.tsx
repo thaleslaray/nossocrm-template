@@ -1,4 +1,34 @@
+/**
+ * @fileoverview Contexto Principal do CRM
+ * 
+ * Provider composto que agrega todos os contextos de domínio (deals, contacts,
+ * activities, boards, settings) em uma API unificada para compatibilidade.
+ * 
+ * @module context/CRMContext
+ * 
+ * Este contexto serve como camada de compatibilidade, delegando para
+ * contextos especializados internamente. Para novos desenvolvimentos,
+ * considere usar os hooks específicos diretamente.
+ * 
+ * @example
+ * ```tsx
+ * // Uso do contexto unificado (legado)
+ * const {
+ *   deals,
+ *   contacts,
+ *   addDeal,
+ *   aiApiKey,
+ *   setAiApiKey
+ * } = useCRM();
+ * 
+ * // Alternativa: hooks específicos (recomendado)
+ * import { useDeals } from '@/context/deals/DealsContext';
+ * const { rawDeals, addDeal } = useDeals();
+ * ```
+ */
+
 import React, { createContext, useContext, useMemo, useEffect, ReactNode, useState, useCallback } from 'react';
+import { useAuth } from '@/context/AuthContext';
 import {
   Deal,
   Activity,
@@ -25,31 +55,53 @@ import { SettingsProvider, useSettings } from './settings/SettingsContext';
 // CRM CONTEXT TYPE (Legacy API - Backward Compatible)
 // ============================================
 
+/**
+ * Tipo do contexto CRM unificado
+ * 
+ * Interface de compatibilidade que expõe funcionalidades de todos os
+ * contextos de domínio. Mantida para código legado.
+ * 
+ * @interface CRMContextType
+ */
 interface CRMContextType {
   // Loading states
+  /** Se algum contexto está carregando */
   loading: boolean;
+  /** Primeiro erro encontrado, se houver */
   error: string | null;
 
   // Views (denormalized)
+  /** Deals com dados de contato e empresa agregados */
   deals: DealView[];
+  /** Empresas cadastradas no CRM */
   companies: Company[];
+  /** Contatos cadastrados */
   contacts: Contact[];
+  /** @deprecated Usar leadsFromContacts */
   leads: Lead[];
+  /** Contatos em estágio de lead */
   leadsFromContacts: Contact[];
+  /** Catálogo de produtos */
   products: Product[];
+  /** Definições de campos customizados */
   customFieldDefinitions: CustomFieldDefinition[];
+  /** Tags disponíveis */
   availableTags: string[];
 
   // Lifecycle Stages
+  /** Estágios do funil de lifecycle */
   lifecycleStages: LifecycleStage[];
   addLifecycleStage: (stage: Omit<LifecycleStage, 'id' | 'order'>) => Promise<LifecycleStage | null>;
   updateLifecycleStage: (id: string, updates: Partial<LifecycleStage>) => Promise<void>;
-  deleteLifecycleStage: (id: string) => Promise<void>;
+  deleteLifecycleStage: (id: string, linkedContactsCount?: number) => Promise<void>;
   reorderLifecycleStages: (newOrder: LifecycleStage[]) => Promise<void>;
 
   // Boards
+  /** Lista de boards/pipelines */
   boards: Board[];
+  /** Board atualmente selecionado */
   activeBoard: Board | null;
+  /** ID do board ativo */
   activeBoardId: string;
   setActiveBoardId: (id: string) => void;
   addBoard: (board: Omit<Board, 'id' | 'createdAt'>) => Promise<Board | null>;
@@ -59,12 +111,13 @@ interface CRMContextType {
   // Deals
   addDeal: (deal: Omit<Deal, 'id' | 'createdAt'>, relatedData?: { contact?: Partial<Contact>; companyName?: string }) => Promise<void>;
   updateDeal: (id: string, updates: Partial<Deal>) => Promise<void>;
-  moveDeal: (id: string, newStatus: string, lossReason?: string) => Promise<void>;
+  // moveDeal removido - use useMoveDeal de @/lib/query/hooks
   deleteDeal: (id: string) => Promise<void>;
   addItemToDeal: (dealId: string, item: Omit<DealItem, 'id'>) => Promise<DealItem | null>;
   removeItemFromDeal: (dealId: string, itemId: string) => Promise<void>;
 
   // Activities
+  /** Lista de atividades (tarefas, reuniões) */
   activities: Activity[];
   addActivity: (activity: Omit<Activity, 'id' | 'createdAt'>) => Promise<Activity | null>;
   updateActivity: (id: string, updates: Partial<Activity>) => Promise<void>;
@@ -72,9 +125,12 @@ interface CRMContextType {
   toggleActivityCompletion: (id: string) => Promise<void>;
 
   // Leads (deprecated)
+  /** @deprecated Usar addContact com lifecycle_stage_id */
   addLead: (lead: Lead) => void;
+  /** @deprecated Usar updateContact */
   updateLead: (id: string, updates: Partial<Lead>) => void;
   convertLead: (leadId: string) => Promise<void>;
+  /** @deprecated Usar deleteContact */
   discardLead: (id: string) => void;
 
   // Companies
@@ -97,6 +153,7 @@ interface CRMContextType {
   removeTag: (tag: string) => void;
 
   // Utilities
+  /** Verifica saúde da carteira */
   checkWalletHealth: () => Promise<number>;
   checkStagnantDeals: () => Promise<number>;
 
@@ -120,6 +177,10 @@ interface CRMContextType {
 
   // Refresh
   refresh: () => Promise<void>;
+
+  // UI State (Global)
+  sidebarCollapsed: boolean;
+  setSidebarCollapsed: (collapsed: boolean) => void;
 }
 
 const CRMContext = createContext<CRMContextType | undefined>(undefined);
@@ -194,7 +255,7 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     lifecycleStages,
     addLifecycleStage,
     updateLifecycleStage,
-    deleteLifecycleStage,
+    deleteLifecycleStage: deleteLifecycleStageRaw,
     reorderLifecycleStages,
     products,
     customFieldDefinitions,
@@ -226,19 +287,41 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     refresh: refreshSettings,
   } = useSettings();
 
+  const { profile, user } = useAuth();
+
+  // Wrap deleteLifecycleStage to inject contacts for validation
+  const deleteLifecycleStage = useCallback(async (id: string) => {
+    return await deleteLifecycleStageRaw(id, contacts);
+  }, [deleteLifecycleStageRaw, contacts]);
+
+  // Local UI State
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
   // Aggregate loading and error states
   const loading = dealsLoading || contactsLoading || companiesLoading || activitiesLoading || boardsLoading || settingsLoading;
   const error = dealsError || contactsError || companiesError || activitiesError || boardsError || settingsError;
 
   // View Projection: deals with company/contact names
   const deals: DealView[] = useMemo(() => {
-    return rawDeals.map(deal => ({
-      ...deal,
-      companyName: companyMap[deal.companyId]?.name || 'Empresa Desconhecida',
-      contactName: contactMap[deal.contactId]?.name || 'Sem Contato',
-      contactEmail: contactMap[deal.contactId]?.email || '',
-    }));
-  }, [rawDeals, companyMap, contactMap]);
+    return rawDeals.map(deal => {
+      // Find the stage label from the board stages
+      const board = boards.find(b => b.id === deal.boardId);
+      const stage = board?.stages?.find(s => s.id === deal.status);
+
+      return {
+        ...deal,
+        companyName: companyMap[deal.companyId]?.name || 'Empresa Desconhecida',
+        clientCompanyName: companyMap[deal.clientCompanyId || deal.companyId]?.name,
+        contactName: contactMap[deal.contactId]?.name || 'Sem Contato',
+        contactEmail: contactMap[deal.contactId]?.email || '',
+        stageLabel: stage?.label || 'Desconhecido',
+        owner: (deal.ownerId === profile?.id || deal.ownerId === user?.id) ? {
+          name: profile?.nickname || profile?.first_name || (user?.email?.split('@')[0]) || 'Eu',
+          avatar: profile?.avatar_url || ''
+        } : deal.owner
+      };
+    });
+  }, [rawDeals, companyMap, contactMap, boards, profile, user]);
 
   // Update contact stage helper
   const updateContactStage = useCallback(async (id: string, stage: string) => {
@@ -271,7 +354,7 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     // Handle Company
     if (relatedData?.companyName) {
       const existingCompany = companies.find(
-        c => c.name.toLowerCase() === relatedData.companyName!.toLowerCase()
+        c => (c.name || '').toLowerCase() === relatedData.companyName!.toLowerCase()
       );
       if (existingCompany) {
         finalCompanyId = existingCompany.id;
@@ -295,7 +378,7 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     // Handle Contact
     if (relatedData?.contact && relatedData.contact.name) {
       const existingContact = relatedData.contact.email
-        ? contacts.find(c => c.email.toLowerCase() === relatedData.contact!.email!.toLowerCase())
+        ? contacts.find(c => (c.email || '').toLowerCase() === relatedData.contact!.email!.toLowerCase())
         : undefined;
 
       if (existingContact) {
@@ -345,81 +428,8 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     }
   }, [companies, contacts, activeBoard, addCompany, addContact, addDealState, addActivity]);
 
-  const moveDeal = useCallback(async (id: string, newStatus: string, lossReason?: string) => {
-    await updateDealStatus(id, newStatus, lossReason);
-
-    const deal = rawDeals.find(l => l.id === id);
-    if (deal) {
-      // Busca o label do estágio para exibir no histórico (não o UUID)
-      const targetStage = activeBoard?.stages.find(s => s.id === newStatus);
-      const stageLabel = targetStage?.label || newStatus;
-      
-      await addActivity({
-        dealId: id,
-        dealTitle: deal.title,
-        type: 'STATUS_CHANGE',
-        title: `Moveu para ${stageLabel}`,
-        description: lossReason ? `Motivo da perda: ${lossReason}` : undefined,
-        date: new Date().toISOString(),
-        user: { name: 'Eu', avatar: 'https://i.pravatar.cc/150?u=me' },
-        completed: true,
-      });
-
-      // LinkedStage: Update contact stage when moving to linked column
-      if (activeBoard) {
-        const targetStage = activeBoard.stages.find(s => s.id === newStatus);
-        if (targetStage && targetStage.linkedLifecycleStage) {
-          const lifecycleStageName =
-            lifecycleStages.find(ls => ls.id === targetStage.linkedLifecycleStage)?.name ||
-            targetStage.linkedLifecycleStage;
-
-          await updateContactStage(deal.contactId, targetStage.linkedLifecycleStage);
-          await addActivity({
-            dealId: id,
-            dealTitle: deal.title,
-            type: 'STATUS_CHANGE',
-            title: `Contato promovido para ${lifecycleStageName}`,
-            description: `Automático via LinkedStage da etapa "${targetStage.label}"`,
-            date: new Date().toISOString(),
-            user: { name: 'Sistema', avatar: '' },
-            completed: true,
-          });
-        }
-      }
-
-      // NextBoard Automation
-      if (activeBoard && newStatus === DealStatus.CLOSED_WON && activeBoard.nextBoardId) {
-        const nextBoard = getBoardById(activeBoard.nextBoardId);
-        if (nextBoard && nextBoard.stages.length > 0) {
-          const newDeal: Omit<Deal, 'id' | 'createdAt'> = {
-            ...deal,
-            boardId: nextBoard.id,
-            status: nextBoard.stages[0].id,
-            updatedAt: new Date().toISOString(),
-            lastStageChangeDate: undefined,
-            lossReason: undefined,
-            nextActivity: undefined,
-            aiSummary: undefined,
-          };
-
-          const createdDeal = await addDealState(newDeal);
-
-          if (createdDeal) {
-            await addActivity({
-              dealId: createdDeal.id,
-              dealTitle: createdDeal.title,
-              type: 'STATUS_CHANGE',
-              title: 'Criado via Automação',
-              description: `Originado do board "${activeBoard.name}"`,
-              date: new Date().toISOString(),
-              user: { name: 'Sistema', avatar: '' },
-              completed: true,
-            });
-          }
-        }
-      }
-    }
-  }, [rawDeals, activeBoard, lifecycleStages, updateDealStatus, addActivity, updateContactStage, getBoardById, addDealState]);
+  // moveDeal foi removido - use useMoveDeal de @/lib/query/hooks
+  // O hook unificado trata: detecção won/lost, atividades, LinkedStage, etc.
 
   const convertContactToDeal = useCallback(async (contactId: string) => {
     const contact = contacts.find(c => c.id === contactId);
@@ -557,7 +567,7 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
           dealTitle: 'Carteira de Clientes',
           type: 'TASK',
           title: 'Análise de Carteira: Risco de Churn',
-          description: `O cliente ${contact.name} (Empresa: ${companies.find(c => c.id === contact.companyId)?.name}) não compra há mais de 30 dias.`,
+          description: `O cliente ${contact.name} ${companies.find(c => c.id === contact.companyId)?.name ? `(Empresa: ${companies.find(c => c.id === contact.companyId)?.name})` : ''} não compra há mais de 30 dias.`,
           date: new Date().toISOString(),
           user: { name: 'Sistema', avatar: '' },
           completed: false,
@@ -591,7 +601,7 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
           // Buscar o label do estágio para a mensagem (não UUID)
           const board = getBoardById(deal.boardId);
           const stageLabel = board?.stages.find(s => s.id === deal.status)?.label || deal.status;
-          
+
           await addActivity({
             dealId: deal.id,
             dealTitle: deal.title,
@@ -640,7 +650,6 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       deleteBoard,
       addDeal,
       updateDeal,
-      moveDeal,
       deleteDeal,
       addItemToDeal,
       removeItemFromDeal,
@@ -680,6 +689,8 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       aiAnthropicCaching,
       setAiAnthropicCaching,
       refresh,
+      sidebarCollapsed,
+      setSidebarCollapsed,
     }),
     [
       loading,
@@ -709,7 +720,6 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       deleteBoard,
       addDeal,
       updateDeal,
-      moveDeal,
       deleteDeal,
       addItemToDeal,
       removeItemFromDeal,
@@ -749,6 +759,8 @@ const CRMInnerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
       aiAnthropicCaching,
       setAiAnthropicCaching,
       refresh,
+      sidebarCollapsed,
+      setSidebarCollapsed,
     ]
   );
 

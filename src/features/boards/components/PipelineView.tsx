@@ -8,6 +8,7 @@ import { BoardStrategyHeader } from './Kanban/BoardStrategyHeader';
 import { KanbanBoard } from './Kanban/KanbanBoard';
 import { KanbanList } from './Kanban/KanbanList';
 import { DeleteBoardModal } from './Modals/DeleteBoardModal';
+import { LossReasonModal } from '@/components/ui/LossReasonModal';
 import { DealView, CustomFieldDefinition, DealStatus, Board, BoardStage } from '@/types';
 
 interface PipelineViewProps {
@@ -38,8 +39,8 @@ interface PipelineViewProps {
   setSearchTerm: (term: string) => void;
   ownerFilter: 'all' | 'mine';
   setOwnerFilter: (filter: 'all' | 'mine') => void;
-  isFilterOpen: boolean;
-  setIsFilterOpen: (isOpen: boolean) => void;
+  statusFilter: 'open' | 'won' | 'lost' | 'all';
+  setStatusFilter: (filter: 'open' | 'won' | 'lost' | 'all') => void;
   draggingId: string | null;
   selectedDealId: string | null;
   setSelectedDealId: (id: string | null) => void;
@@ -53,12 +54,23 @@ interface PipelineViewProps {
   handleDragStart: (e: React.DragEvent, id: string) => void;
   handleDragOver: (e: React.DragEvent) => void;
   handleDrop: (e: React.DragEvent, stageId: string) => void;
+  /** Keyboard-accessible handler to move a deal to a new stage */
+  handleMoveDealToStage: (dealId: string, newStageId: string) => void;
   handleQuickAddActivity: (
     dealId: string,
     type: 'CALL' | 'MEETING' | 'EMAIL',
     dealTitle: string
   ) => void;
   setLastMouseDownDealId: (id: string | null) => void;
+  // Loss Reason Modal
+  lossReasonModal: {
+    isOpen: boolean;
+    dealId: string;
+    dealTitle: string;
+    stageId: string;
+  } | null;
+  handleLossReasonConfirm: (reason: string) => void;
+  handleLossReasonClose: () => void;
 }
 
 export const PipelineView: React.FC<PipelineViewProps> = ({
@@ -89,8 +101,8 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
   setSearchTerm,
   ownerFilter,
   setOwnerFilter,
-  isFilterOpen,
-  setIsFilterOpen,
+  statusFilter,
+  setStatusFilter,
   draggingId,
   selectedDealId,
   setSelectedDealId,
@@ -104,8 +116,13 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
   handleDragStart,
   handleDragOver,
   handleDrop,
+  handleMoveDealToStage,
   handleQuickAddActivity,
   setLastMouseDownDealId,
+  // Loss Reason Modal
+  lossReasonModal,
+  handleLossReasonConfirm,
+  handleLossReasonClose,
 }) => {
   const handleUpdateStage = (updatedStage: BoardStage) => {
     if (!activeBoard) return;
@@ -155,8 +172,8 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
             setSearchTerm={setSearchTerm}
             ownerFilter={ownerFilter}
             setOwnerFilter={setOwnerFilter}
-            isFilterOpen={isFilterOpen}
-            setIsFilterOpen={setIsFilterOpen}
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
             onNewDeal={() => setIsCreateModalOpen(true)}
           />
 
@@ -176,6 +193,7 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
                 setOpenActivityMenuId={setOpenActivityMenuId}
                 handleQuickAddActivity={handleQuickAddActivity}
                 setLastMouseDownDealId={setLastMouseDownDealId}
+                onMoveDealToStage={handleMoveDealToStage}
               />
             ) : (
               <KanbanList
@@ -192,8 +210,8 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
         </>
       )}
 
-      <CreateDealModal 
-        isOpen={isCreateModalOpen} 
+      <CreateDealModal
+        isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         activeBoard={activeBoard}
         activeBoardId={activeBoardId}
@@ -232,6 +250,13 @@ export const PipelineView: React.FC<PipelineViewProps> = ({
         availableBoards={availableBoardsForMove}
         selectedTargetBoardId={boardToDelete?.targetBoardId}
         onSelectTargetBoard={setTargetBoardForDelete}
+      />
+
+      <LossReasonModal
+        isOpen={lossReasonModal?.isOpen ?? false}
+        onClose={handleLossReasonClose}
+        onConfirm={handleLossReasonConfirm}
+        dealTitle={lossReasonModal?.dealTitle}
       />
     </div>
   );

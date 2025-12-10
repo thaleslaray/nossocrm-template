@@ -1,9 +1,40 @@
-import { generateText, tool } from 'ai';
-import { google } from '@ai-sdk/google';
-import { anthropic } from '@ai-sdk/anthropic';
-import { getModel } from '@/services/ai/config';
+/**
+ * @fileoverview Serviço de integração com IA Gemini para funcionalidades do CRM.
+ * 
+ * Este módulo fornece todas as funções de IA do CRM, incluindo:
+ * - Análise de leads e oportunidades
+ * - Geração de emails e mensagens
+ * - Processamento de áudio (transcrição)
+ * - Chat conversacional com contexto do CRM
+ * - Geração automática de boards/pipelines
+ * 
+ * **Segurança (VULN-002)**: Todas as chamadas de IA passam pelo Edge Function ai-proxy.
+ * As chaves de API são armazenadas criptografadas no banco e nunca expostas ao frontend.
+ * 
+ * **Compliance LGPD**: Consentimento implícito - configurar uma API key = consentimento.
+ * Funcionalidades de IA só funcionam quando o usuário configurou sua chave nas configurações.
+ * 
+ * @module services/geminiService
+ */
+
+import { callAIProxy, isConsentError, isRateLimitError } from '@/lib/supabase/ai-proxy';
 import { Deal, DealView, LifecycleStage } from '@/types';
 
+
+/**
+ * Configuração de IA (legado).
+ * 
+ * @deprecated AIConfig não é mais necessária - configuração é tratada server-side.
+ * Mantida para compatibilidade durante migração.
+ * 
+ * @interface AIConfig
+ * @property {string} provider - Provedor de IA ('google' | 'openai' | 'anthropic').
+ * @property {string} apiKey - Chave de API do provedor.
+ * @property {string} model - ID do modelo a ser usado.
+ * @property {boolean} thinking - Habilita modo de raciocínio estendido.
+ * @property {boolean} search - Habilita busca web.
+ * @property {boolean} anthropicCaching - Habilita cache do Anthropic.
+ */
 export interface AIConfig {
   provider: 'google' | 'openai' | 'anthropic';
   apiKey: string;
@@ -13,190 +44,188 @@ export interface AIConfig {
   anthropicCaching: boolean;
 }
 
+/**
+ * Analisa um lead/deal e fornece sugestões e score de probabilidade.
+ * 
+ * @param deal - O deal ou view do deal a ser analisado.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @param stageLabel - Nome do estágio atual para contexto.
+ * @returns Promise com sugestão textual e score de probabilidade.
+ * 
+ * @example
+ * ```typescript
+ * const analysis = await analyzeLead(deal, undefined, 'Proposta');
+ * console.log(analysis.suggestion); // "Considere agendar follow-up..."
+ * console.log(analysis.probabilityScore); // 75
+ * ```
+ */
 export const analyzeLead = async (
   deal: Deal | DealView,
-  config?: AIConfig,
+  _config?: AIConfig,
   /** Nome do estágio atual (para exibir label ao invés de UUID) */
   stageLabel?: string
 ): Promise<{ suggestion: string; probabilityScore: number }> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) return { suggestion: 'Erro: API Key não configurada.', probabilityScore: 0 };
-
-  const model = getModel(provider, apiKey, modelId);
-
-  // Usar stageLabel se fornecido, senão fallback para status
-  const stageName = stageLabel || deal.status;
-
-  const prompt = `
-    Analise esta oportunidade de venda (Deal) e forneça:
-    1. Uma sugestão curta e prática do que fazer agora (máx 2 frases).
-    2. Uma probabilidade de fechamento (0 a 100) baseada nos dados.
-
-    Retorne APENAS um JSON no formato:
-    { "suggestion": "...", "probabilityScore": 50 }
-
-    Dados:
-    Título: ${deal.title}
-    Valor: ${deal.value}
-    Estágio: ${stageName}
-    Probabilidade Atual: ${deal.probability}
-    Prioridade: ${deal.priority}
-  `;
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
-    });
-    const text = result.text;
-    const jsonStr = text
-      .replace(/```json/g, '')
-      .replace(/```/g, '')
-      .trim();
-    return JSON.parse(jsonStr);
+    return await callAIProxy<{ suggestion: string; probabilityScore: number }>(
+      'analyzeLead',
+      {
+        deal: {
+          title: deal.title,
+          value: deal.value,
+          status: deal.status,
+          probability: deal.probability,
+          priority: deal.priority,
+        },
+        stageLabel,
+      }
+    );
   } catch (error) {
     console.error('Error analyzing lead:', error);
+
+    if (isConsentError(error)) {
+      return {
+        suggestion: 'Consentimento necessário para usar IA. Clique para autorizar.',
+        probabilityScore: deal.probability
+      };
+    }
+
+    if (isRateLimitError(error)) {
+      return {
+        suggestion: 'Limite de requisições atingido. Tente novamente em alguns minutos.',
+        probabilityScore: deal.probability
+      };
+    }
+
     return { suggestion: 'Não foi possível analisar.', probabilityScore: deal.probability };
   }
 };
 
+/**
+ * Gera um rascunho de email personalizado para um deal.
+ * 
+ * @param deal - O deal ou view do deal para contextualizar o email.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @param stageLabel - Nome do estágio atual para contexto.
+ * @returns Promise com o texto do email gerado.
+ * 
+ * @example
+ * ```typescript
+ * const email = await generateEmailDraft(deal, undefined, 'Negociação');
+ * console.log(email); // "Prezado João, ..."
+ * ```
+ */
 export const generateEmailDraft = async (
   deal: Deal | DealView,
-  config?: AIConfig,
-  /** Nome do estágio atual (para exibir label ao invés de UUID) */
+  _config?: AIConfig,
   stageLabel?: string
 ): Promise<string> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) return 'Erro: API Key não configurada.';
-
-  const model = getModel(provider, apiKey, modelId);
-
-  // Usar stageLabel se fornecido, senão fallback para status
-  const stageName = stageLabel || deal.status;
-
-  const prompt = `
-    Escreva um rascunho de e-mail curto e persuasivo para este cliente.
-    O objetivo é mover o negócio para a próxima fase.
-    
-    Cliente: ${'contactName' in deal ? deal.contactName : 'Cliente'}
-    Empresa: ${'companyName' in deal ? deal.companyName : 'Empresa'}
-    Negócio: ${deal.title}
-    Estágio Atual: ${stageName}
-
-    Retorne apenas o corpo do e-mail.
-  `;
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
+    return await callAIProxy<string>('generateEmailDraft', {
+      deal: {
+        title: deal.title,
+        value: deal.value,
+        status: deal.status,
+        contactName: 'contactName' in deal ? deal.contactName : undefined,
+        companyName: 'companyName' in deal ? deal.companyName : undefined,
+      },
+      stageLabel,
     });
-    return result.text;
   } catch (error) {
     console.error('Error generating email:', error);
+    if (isConsentError(error)) return 'Consentimento necessário para usar IA.';
+    if (isRateLimitError(error)) return 'Limite de requisições atingido.';
     return 'Erro ao gerar e-mail.';
   }
 };
 
+/**
+ * Gera respostas sugeridas para objeções de vendas.
+ * 
+ * @param deal - O deal ou view do deal relacionado.
+ * @param objection - Texto da objeção do cliente.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com array de respostas sugeridas.
+ * 
+ * @example
+ * ```typescript
+ * const responses = await generateObjectionResponse(deal, 'Preço muito alto');
+ * responses.forEach(r => console.log(r)); // Múltiplas sugestões de resposta
+ * ```
+ */
 export const generateObjectionResponse = async (
   deal: Deal | DealView,
   objection: string,
-  config?: AIConfig
+  _config?: AIConfig
 ): Promise<string[]> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) return ['Erro: API Key não configurada.'];
-
-  const model = getModel(provider, apiKey, modelId);
-
-  const prompt = `
-    O cliente apresentou a seguinte objeção: "${objection}"
-    Contexto do negócio: ${deal.title}, Valor: ${deal.value}.
-
-    Forneça 3 opções de resposta curtas e matadoras para contornar essa objeção.
-    Retorne APENAS um JSON array de strings:
-    ["Resposta 1...", "Resposta 2...", "Resposta 3..."]
-  `;
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
+    return await callAIProxy<string[]>('generateObjectionResponse', {
+      deal: { title: deal.title, value: deal.value },
+      objection,
     });
-    const text = result.text;
-    const jsonStr = text
-      .replace(/```json/g, '')
-      .replace(/```/g, '')
-      .trim();
-    return JSON.parse(jsonStr);
   } catch (error) {
     console.error('Error generating objections:', error);
+    if (isConsentError(error)) return ['Consentimento necessário para usar IA.'];
+    if (isRateLimitError(error)) return ['Limite de requisições atingido.'];
     return ['Não foi possível gerar respostas.'];
   }
 };
 
+/**
+ * Processa uma nota de áudio, transcrevendo e analisando sentimento.
+ * 
+ * Requer consentimento biométrico pois processa dados de voz.
+ * 
+ * @param audioBase64 - Áudio codificado em base64.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com transcrição, sentimento e ação sugerida.
+ * 
+ * @example
+ * ```typescript
+ * const result = await processAudioNote(audioData);
+ * console.log(result.transcription); // Texto transcrito
+ * console.log(result.sentiment); // 'Positivo', 'Negativo', etc.
+ * console.log(result.nextAction); // { type: 'CALL', title: '...', date: '...' }
+ * ```
+ */
 export const processAudioNote = async (
   audioBase64: string,
-  config?: AIConfig
+  _config?: AIConfig
 ): Promise<{
   transcription: string;
   sentiment: string;
   nextAction?: { type: string; title: string; date: string };
 }> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) return { transcription: 'Erro: API Key não configurada.', sentiment: 'Neutro' };
-
-  const model = getModel(provider, apiKey, modelId);
-
-  const prompt = `
-    Transcreva este áudio de uma nota de venda.
-    Analise o sentimento (Positivo, Neutro, Negativo, Urgente).
-    Se houver uma próxima ação clara (ex: "ligar amanhã", "enviar proposta"), extraia-a.
-
-    Retorne JSON:
-    {
-      "transcription": "...",
-      "sentiment": "...",
-      "nextAction": { "type": "CALL" | "EMAIL" | "TASK", "title": "...", "date": "ISOString" } (opcional)
-    }
-  `;
-
   try {
-    const result = await generateText({
-      model,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
-            { type: 'file', data: audioBase64, mediaType: 'audio/webm' },
-          ],
-        },
-      ],
-    });
-    const text = result.text;
-    const jsonStr = text
-      .replace(/```json/g, '')
-      .replace(/```/g, '')
-      .trim();
-    return JSON.parse(jsonStr);
+    // processAudioNote requires biometric consent (voice data)
+    return await callAIProxy<{
+      transcription: string;
+      sentiment: string;
+      nextAction?: { type: string; title: string; date: string };
+    }>('processAudioNote', { audioBase64 });
   } catch (error) {
     console.error('Error processing audio:', error);
+    if (isConsentError(error)) {
+      return {
+        transcription: 'Consentimento para dados biométricos necessário.',
+        sentiment: 'Erro'
+      };
+    }
+    if (isRateLimitError(error)) {
+      return { transcription: 'Limite de requisições atingido.', sentiment: 'Erro' };
+    }
     return { transcription: 'Erro ao processar áudio.', sentiment: 'Erro' };
   }
 };
 
+/**
+ * Dados para geração do briefing diário.
+ * 
+ * @interface DailyBriefingData
+ * @property {Array<{name: string}>} birthdays - Aniversariantes do dia.
+ * @property {number} stalledDeals - Quantidade de deals parados.
+ * @property {number} overdueActivities - Atividades atrasadas.
+ * @property {number} upsellDeals - Oportunidades de upsell.
+ */
 interface DailyBriefingData {
   birthdays: Array<{ name: string }>;
   stalledDeals: number;
@@ -204,118 +233,96 @@ interface DailyBriefingData {
   upsellDeals: number;
 }
 
+/**
+ * Gera um briefing diário personalizado com resumo das atividades.
+ * 
+ * @param data - Dados para gerar o briefing.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com texto do briefing personalizado.
+ * 
+ * @example
+ * ```typescript
+ * const briefing = await generateDailyBriefing({
+ *   birthdays: [{ name: 'João' }],
+ *   stalledDeals: 3,
+ *   overdueActivities: 5,
+ *   upsellDeals: 2
+ * });
+ * ```
+ */
 export const generateDailyBriefing = async (
   data: DailyBriefingData,
-  config?: AIConfig
+  _config?: AIConfig
 ): Promise<string> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) return 'Erro: API Key não configurada.';
-
-  const model = getModel(provider, apiKey, modelId);
-
-  const prompt = `
-    Você é um gerente de vendas sênior analisando o CRM.
-    Gere um briefing matinal curto e motivador para o vendedor "Thales".
-    
-    Dados do dia:
-    - Aniversariantes: ${data.birthdays.length}
-    - Negócios Estagnados (Risco): ${data.stalledDeals}
-    - Atividades Atrasadas: ${data.overdueActivities}
-    - Oportunidades de Upsell: ${data.upsellDeals}
-
-    Fale em primeira pessoa ("Eu notei que...", "Sugiro que...").
-    Se houver riscos, foque neles. Se estiver tudo limpo, parabenize.
-    Máximo 3 frases.
-  `;
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
-    });
-    return result.text;
+    return await callAIProxy<string>('generateDailyBriefing', { data });
   } catch (error) {
     console.error('Error generating briefing:', error);
+    if (isConsentError(error)) return 'Consentimento necessário para usar IA.';
+    if (isRateLimitError(error)) return 'Limite de requisições atingido.';
     return 'Bom dia! Vamos focar em limpar as pendências hoje.';
   }
 };
 
+/**
+ * Gera uma mensagem de resgate para reativar deals inativos.
+ * 
+ * A mensagem é personalizada de acordo com o canal de comunicação.
+ * 
+ * @param deal - O deal ou view do deal a ser resgatado.
+ * @param channel - Canal de comunicação ('EMAIL' | 'WHATSAPP' | 'PHONE').
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @param stageLabel - Nome do estágio atual para contexto.
+ * @returns Promise com a mensagem de resgate gerada.
+ * 
+ * @example
+ * ```typescript
+ * const message = await generateRescueMessage(deal, 'WHATSAPP');
+ * // Mensagem curta e informal para WhatsApp
+ * 
+ * const email = await generateRescueMessage(deal, 'EMAIL');
+ * // Email mais formal e estruturado
+ * ```
+ */
 export const generateRescueMessage = async (
   deal: Deal | DealView,
   channel: 'EMAIL' | 'WHATSAPP' | 'PHONE',
-  config?: AIConfig,
-  /** Nome do estágio atual (para exibir label ao invés de UUID) */
+  _config?: AIConfig,
   stageLabel?: string
 ): Promise<string> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) return 'Erro: API Key não configurada.';
-
-  const model = getModel(provider, apiKey, modelId);
-
-  // Usar stageLabel se fornecido, senão fallback para status
-  const stageName = stageLabel || deal.status;
-
-  let context = `
-    Cliente: ${'contactName' in deal ? deal.contactName : 'Cliente'}
-    Empresa: ${'companyName' in deal ? deal.companyName : 'Empresa'}
-    Negócio: ${deal.title}
-    Valor: ${deal.value}
-    Estágio: ${stageName}
-    Tempo parado: > 7 dias
-    `;
-
-  let prompt = '';
-
-  if (channel === 'WHATSAPP') {
-    prompt = `
-        ${context}
-        Escreva uma mensagem de WhatsApp curta, casual e direta para reativar esse contato.
-        Use emojis com moderação. O tom deve ser "preocupado mas leve".
-        Ex: "Oi Fulano, tudo bem? Vi que..."
-        Retorne APENAS o texto da mensagem.
-        `;
-  } else if (channel === 'PHONE') {
-    prompt = `
-        ${context}
-        Crie um mini-script de ligação (bullet points) para o vendedor ligar agora.
-        O objetivo é descobrir se o projeto ainda está de pé.
-        Inclua:
-        - Abertura (Quebra-gelo)
-        - Pergunta Chave (O motivo da ligação)
-        - Fechamento (Próximo passo)
-        Retorne em formato de lista simples.
-        `;
-  } else {
-    // EMAIL
-    prompt = `
-        ${context}
-        Escreva um e-mail de "Break-up" (técnica de vendas).
-        Seja educado mas firme: pergunte se o projeto foi cancelado para que você possa fechar o arquivo.
-        Isso geralmente gera resposta.
-        Retorne APENAS o corpo do e-mail.
-        `;
-  }
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
+    return await callAIProxy<string>('generateRescueMessage', {
+      deal: {
+        title: deal.title,
+        value: deal.value,
+        status: deal.status,
+        contactName: 'contactName' in deal ? deal.contactName : undefined,
+        companyName: 'companyName' in deal ? deal.companyName : undefined,
+      },
+      channel,
+      stageLabel,
     });
-    return result.text;
   } catch (error) {
     console.error('Error generating rescue message:', error);
+    if (isConsentError(error)) return 'Consentimento necessário para usar IA.';
+    if (isRateLimitError(error)) return 'Limite de requisições atingido.';
     return 'Erro ao gerar mensagem.';
   }
 };
 
-// --- NEW: NATURAL LANGUAGE ACTION PARSING ---
+// --- PROCESSAMENTO DE LINGUAGEM NATURAL ---
 
+/**
+ * Ação parseada de texto em linguagem natural.
+ * 
+ * @interface ParsedAction
+ * @property {string} title - Título da ação identificada.
+ * @property {'CALL' | 'MEETING' | 'EMAIL' | 'TASK'} type - Tipo da ação.
+ * @property {string} [date] - Data em formato ISO (se identificada).
+ * @property {string} [contactName] - Nome do contato mencionado.
+ * @property {string} [companyName] - Nome da empresa mencionada.
+ * @property {number} confidence - Score de confiança (0-1).
+ */
 export interface ParsedAction {
   title: string;
   type: 'CALL' | 'MEETING' | 'EMAIL' | 'TASK';
@@ -325,56 +332,44 @@ export interface ParsedAction {
   confidence: number;
 }
 
+/**
+ * Parseia texto em linguagem natural para extrair ações do CRM.
+ * 
+ * Identifica tarefas, reuniões, chamadas e emails em texto livre.
+ * 
+ * @param text - Texto em linguagem natural.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com ação identificada ou null se não encontrada.
+ * 
+ * @example
+ * ```typescript
+ * const action = await parseNaturalLanguageAction(
+ *   'Ligar para João amanhã às 14h sobre proposta'
+ * );
+ * // { type: 'CALL', title: 'Ligar para João', date: '...', confidence: 0.95 }
+ * ```
+ */
 export const parseNaturalLanguageAction = async (
   text: string,
-  config?: AIConfig
+  _config?: AIConfig
 ): Promise<ParsedAction | null> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) {
-    console.warn('API Key missing for NLP action parsing');
-    return null;
-  }
-
-  const model = getModel(provider, apiKey, modelId);
-
-  const now = new Date();
-  const prompt = `
-    Você é um assistente pessoal inteligente. Analise o seguinte comando de voz/texto e extraia uma ação estruturada.
-    
-    Comando: "${text}"
-    
-    Contexto Temporal: Hoje é ${now.toLocaleDateString('pt-BR')} (${now.toLocaleDateString('pt-BR', { weekday: 'long' })}), às ${now.toLocaleTimeString('pt-BR')}.
-    
-    Instruções:
-    1. Identifique a ação principal (Ligar, Reunião, Email, Tarefa).
-    2. Extraia a data e hora mencionadas. Se for relativo (ex: "amanhã à tarde"), calcule a data ISO aproximada. Se não houver hora, defina 09:00 para tarefas e 14:00 para reuniões.
-    3. Identifique nomes de pessoas (contactName) e empresas (companyName).
-    4. Crie um título curto e descritivo.
-    
-    Retorne JSON.
-  `;
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
-    });
-
-    const text = result.text;
-    const jsonStr = text
-      .replace(/```json/g, '')
-      .replace(/```/g, '')
-      .trim();
-    return JSON.parse(jsonStr);
+    return await callAIProxy<ParsedAction>('parseNaturalLanguageAction', { text });
   } catch (error) {
     console.error('NLP Action Parsing Error:', error);
     return null;
   }
 };
 
+/**
+ * Contexto do CRM para chat conversacional.
+ * 
+ * @interface CRMContext
+ * @property {Array<{id: string, title: string, value: number, status: string}>} [deals] - Deals do usuário.
+ * @property {Array<{id: string, name: string, email: string}>} [contacts] - Contatos do usuário.
+ * @property {Array<{id: string, name: string}>} [companies] - Empresas do usuário.
+ * @property {Array<{id: string, title: string, type: string, date: string}>} [activities] - Atividades do usuário.
+ */
 interface CRMContext {
   deals?: Array<{ id: string; title: string; value: number; status: string }>;
   contacts?: Array<{ id: string; name: string; email: string }>;
@@ -383,69 +378,81 @@ interface CRMContext {
   [key: string]: unknown;
 }
 
+/**
+ * Chat conversacional com contexto completo do CRM.
+ * 
+ * Permite fazer perguntas sobre dados do CRM em linguagem natural.
+ * 
+ * @param message - Mensagem do usuário.
+ * @param context - Contexto com dados do CRM para a IA.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com resposta da IA.
+ * 
+ * @example
+ * ```typescript
+ * const response = await chatWithCRM(
+ *   'Quais deals estão parados há mais de 7 dias?',
+ *   { deals: [...], activities: [...] }
+ * );
+ * ```
+ */
 export const chatWithCRM = async (
   message: string,
   context: CRMContext,
-  config?: AIConfig
+  _config?: AIConfig
 ): Promise<string> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) return 'Erro: API Key não configurada.';
-
-  const model = getModel(provider, apiKey, modelId);
-
-  const prompt = `
-    Você é um assistente de CRM. O usuário disse: "${message}".
-    Contexto atual: ${JSON.stringify(context)}.
-    Responda de forma útil e concisa.
-  `;
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
-    });
-    return result.text;
+    return await callAIProxy<string>('chatWithCRM', { message, context });
   } catch (error) {
     console.error('Error in chatWithCRM:', error);
+    if (isConsentError(error)) return 'Consentimento necessário para usar IA.';
+    if (isRateLimitError(error)) return 'Limite de requisições atingido.';
     return 'Desculpe, não consegui processar sua solicitação.';
   }
 };
 
+/**
+ * Gera uma mensagem de aniversário personalizada.
+ * 
+ * @param contactName - Nome do contato aniversariante.
+ * @param age - Idade do contato (opcional).
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com mensagem de aniversário.
+ * 
+ * @example
+ * ```typescript
+ * const message = await generateBirthdayMessage('Maria', 35);
+ * // "Parabéns Maria pelos seus 35 anos! ..."
+ * ```
+ */
 export const generateBirthdayMessage = async (
   contactName: string,
   age?: number,
-  config?: AIConfig
+  _config?: AIConfig
 ): Promise<string> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) return 'Erro: API Key não configurada.';
-
-  const model = getModel(provider, apiKey, modelId);
-
-  const prompt = `
-    Escreva uma mensagem curta e amigável de feliz aniversário para o cliente ${contactName}.
-    ${age ? `Ele está fazendo ${age} anos.` : ''}
-    Tom profissional mas caloroso.
-    Retorne APENAS o texto da mensagem.
-  `;
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
-    });
-    return result.text;
+    return await callAIProxy<string>('generateBirthdayMessage', { contactName, age });
   } catch (error) {
     console.error('Error generating birthday message:', error);
+    if (isConsentError(error)) return 'Consentimento necessário para usar IA.';
+    if (isRateLimitError(error)) return 'Limite de requisições atingido.';
     return 'Parabéns pelo seu dia!';
   }
 };
 
+/**
+ * Board gerado por IA com estrutura completa.
+ * 
+ * @interface GeneratedBoard
+ * @property {string} name - Nome do board.
+ * @property {string} description - Descrição do propósito.
+ * @property {Array} stages - Estágios do pipeline.
+ * @property {string[]} automationSuggestions - Sugestões de automação.
+ * @property {Object} goal - Meta do board com KPIs.
+ * @property {Object} agentPersona - Persona do agente de IA.
+ * @property {string} entryTrigger - Gatilho de entrada de novos itens.
+ * @property {number} confidence - Score de confiança da geração.
+ */
 export interface GeneratedBoard {
   name: string;
   description: string;
@@ -474,7 +481,17 @@ export interface GeneratedBoard {
   linkedLifecycleStage?: string; // Board-level lifecycle stage
 }
 
-// --- STEP 1: BOARD STRUCTURE ---
+// --- GERAÇÃO DE BOARDS EM ETAPAS ---
+
+/**
+ * Resultado da geração de estrutura de board.
+ * 
+ * @interface BoardStructureResult
+ * @property {string} boardName - Nome sugerido para o board.
+ * @property {string} description - Descrição do propósito.
+ * @property {Array} stages - Estágios do pipeline com cores e lifecycle.
+ * @property {string[]} automationSuggestions - Sugestões de automação.
+ */
 interface BoardStructureResult {
   boardName: string;
   description: string;
@@ -488,66 +505,52 @@ interface BoardStructureResult {
   automationSuggestions: string[];
 }
 
+/**
+ * Gera a estrutura de um board a partir de uma descrição em linguagem natural.
+ * 
+ * Esta é a Etapa 1 da geração de board: cria nome, estágios e sugestões.
+ * 
+ * @param description - Descrição do processo de negócio desejado.
+ * @param lifecycleStages - Estágios de lifecycle disponíveis para vincular.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com estrutura do board gerada.
+ * @throws Error se consentimento for necessário.
+ * 
+ * @example
+ * ```typescript
+ * const structure = await generateBoardStructure(
+ *   'Pipeline de vendas para SaaS B2B',
+ *   lifecycleStages
+ * );
+ * ```
+ */
 export const generateBoardStructure = async (
   description: string,
   lifecycleStages: LifecycleStage[] = [],
-  config?: AIConfig
+  _config?: AIConfig
 ): Promise<BoardStructureResult> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) throw new Error('API Key não configurada. Vá em Configurações > IA para adicionar.');
-
-  const model = getModel(provider, apiKey, modelId);
-
-  const lifecycleStagesList = lifecycleStages.map(s => `- ${s.name} (ID: ${s.id})`).join('\n');
-
-  const promptStructure = `
-    Você é um Arquiteto de Processos.
-    O usuário quer um board para: "${description}"
-
-    Defina a ESTRUTURA do board (Fases do Processo).
-    
-    REGRAS DE LIFECYCLE STAGE (CRÍTICO):
-    - Para CADA estágio, defina um 'linkedLifecycleStage' usando APENAS:
-    ${lifecycleStagesList}
-    - Se vazio, use: LEAD, MQL, PROSPECT, CUSTOMER, OTHER.
-    
-    REGRAS DE DESIGN:
-    - "color": bg-blue-500, bg-yellow-500, bg-purple-500, bg-orange-500, bg-green-500.
-    - "name": MÁXIMO 2 PALAVRAS. Ex: "Qualificação", "Fechamento".
-    
-    Retorne JSON:
-    {
-      "boardName": "...",
-      "description": "...",
-      "stages": [ 
-        { "name": "...", "description": "...", "color": "...", "linkedLifecycleStage": "...", "estimatedDuration": "..." }
-      ],
-      "automationSuggestions": [ ... ]
-    }
-  `;
-
   try {
-    const resultStructure = await generateText({ model, prompt: promptStructure });
-    const text = resultStructure.text;
-    
-    // Extrai JSON mesmo quando há texto antes (ex: thinking mode)
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error('No JSON found in response:', text);
-      throw new Error('Resposta da IA não contém JSON válido');
-    }
-    
-    const jsonStr = jsonMatch[0];
-    return JSON.parse(jsonStr);
+    return await callAIProxy<BoardStructureResult>('generateBoardStructure', {
+      description,
+      lifecycleStages: lifecycleStages.map(s => ({ id: s.id, name: s.name })),
+    });
   } catch (error) {
     console.error('Error generating board structure:', error);
+    if (isConsentError(error)) {
+      throw new Error('Consentimento necessário para usar IA.');
+    }
     throw error;
   }
 };
 
+/**
+ * Resultado da geração de estratégia do board.
+ * 
+ * @interface BoardStrategyResult
+ * @property {Object} goal - Meta com descrição, KPI e valor alvo.
+ * @property {Object} agentPersona - Persona do agente de IA do board.
+ * @property {string} entryTrigger - Gatilho para novos itens no board.
+ */
 interface BoardStrategyResult {
   goal: {
     description: string;
@@ -562,63 +565,28 @@ interface BoardStrategyResult {
   entryTrigger: string;
 }
 
-// --- STEP 2: STRATEGY (Context-Aware) ---
+/**
+ * Gera estratégia e metas para um board baseado na estrutura.
+ * 
+ * Esta é a Etapa 2: define metas, KPIs, persona do agente e gatilhos.
+ * 
+ * @param boardData - Estrutura do board gerada na Etapa 1.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com estratégia do board.
+ * 
+ * @example
+ * ```typescript
+ * const strategy = await generateBoardStrategy(boardStructure);
+ * console.log(strategy.goal.kpi); // "Taxa de conversão"
+ * console.log(strategy.agentPersona.name); // "Sales Coach"
+ * ```
+ */
 export const generateBoardStrategy = async (
   boardData: BoardStructureResult,
-  config?: AIConfig
+  _config?: AIConfig
 ): Promise<BoardStrategyResult> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) throw new Error('API Key não configurada. Vá em Configurações > IA para adicionar.');
-
-  const model = getModel(provider, apiKey, modelId);
-
-  const promptStrategy = `
-    Você é um Especialista em Estratégia de Negócios.
-    
-    Temos este Board desenhado:
-    Nome: ${boardData.boardName}
-    Descrição: ${boardData.description}
-    Estágios: ${JSON.stringify(boardData.stages)}
-
-    Agora, defina a ESTRATÉGIA para operar este board.
-
-    1. META (Goal):
-       - KPI: Qual a métrica principal? (Ex: Taxa de Conversão, MRR, Tempo de Resolução)
-       - Target: Qual o alvo numérico? (Seja realista, não use 100% a menos que seja garantia).
-       - Descrição: Por que essa meta importa?
-
-    2. AGENTE (Persona):
-       - Crie um especialista para operar ESTE processo específico.
-       - Nome: Sugira um nome humano (Ex: "Ana", "Carlos").
-       - Cargo: Ex: "SDR Senior", "Gerente de Onboarding".
-       - Comportamento: Descreva COMO ele deve agir em cada fase deste board. Seja detalhado.
-
-    3. GATILHO (Entry Trigger):
-       - Quem entra na primeira fase (${boardData.stages[0]?.name})?
-
-    Retorne JSON:
-    {
-      "goal": { "description": "...", "kpi": "...", "targetValue": "..." },
-      "agentPersona": { "name": "...", "role": "...", "behavior": "..." },
-      "entryTrigger": "..."
-    }
-  `;
-
   try {
-    const resultStrategy = await generateText({ model, prompt: promptStrategy });
-    const text = resultStrategy.text;
-    
-    // Extrai JSON mesmo quando há texto antes (ex: thinking mode)
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error('No JSON found in strategy response:', text);
-      throw new Error('Resposta da IA não contém JSON válido');
-    }
-    
-    return JSON.parse(jsonMatch[0]);
+    return await callAIProxy<BoardStrategyResult>('generateBoardStrategy', { boardData });
   } catch (error) {
     console.error('Error generating strategy:', error);
     // Return default strategy if step 2 fails
@@ -630,6 +598,24 @@ export const generateBoardStrategy = async (
   }
 };
 
+/**
+ * Gera um board completo a partir de uma descrição em linguagem natural.
+ * 
+ * Executa as duas etapas: estrutura (Etapa 1) e estratégia (Etapa 2).
+ * 
+ * @param description - Descrição do processo de negócio desejado.
+ * @param lifecycleStages - Estágios de lifecycle para vincular.
+ * @param config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com board completo gerado.
+ * 
+ * @example
+ * ```typescript
+ * const board = await generateBoardFromDescription(
+ *   'Processo de onboarding de clientes enterprise',
+ *   lifecycleStages
+ * );
+ * ```
+ */
 export const generateBoardFromDescription = async (
   description: string,
   lifecycleStages: LifecycleStage[] = [],
@@ -649,149 +635,77 @@ export const generateBoardFromDescription = async (
     name: boardData.boardName,
   };
 
-  // Normalize is no longer needed since we explicitly set name
-  // if (finalBoard.boardName && !finalBoard.name) finalBoard.name = finalBoard.boardName;
-
   return finalBoard;
 };
 
+/**
+ * Refina um board existente com instruções em linguagem natural.
+ * 
+ * Permite ajustar estágios, metas e configurações via chat.
+ * 
+ * @param currentBoard - Board atual a ser refinado.
+ * @param userInstruction - Instrução do usuário para modificação.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @param chatHistory - Histórico de conversas para contexto.
+ * @returns Promise com mensagem de resposta e board atualizado.
+ * @throws Error se consentimento for necessário.
+ * 
+ * @example
+ * ```typescript
+ * const result = await refineBoardWithAI(
+ *   currentBoard,
+ *   'Adicione um estágio de qualificação antes de proposta',
+ *   undefined,
+ *   chatHistory
+ * );
+ * console.log(result.message); // Explicação da mudança
+ * console.log(result.board); // Board atualizado
+ * ```
+ */
 export const refineBoardWithAI = async (
   currentBoard: GeneratedBoard,
   userInstruction: string,
-  config?: AIConfig,
+  _config?: AIConfig,
   chatHistory?: { role: 'user' | 'ai'; content: string }[]
 ): Promise<{ message: string; board: GeneratedBoard | null }> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) throw new Error('API Key não configurada. Vá em Configurações > IA para adicionar.');
-
-  const model = getModel(provider, apiKey, modelId);
-
-  // Format chat history for context
-  const historyContext = chatHistory
-    ? chatHistory
-        .map(msg => `${msg.role === 'user' ? 'Usuário' : 'Assistente'}: ${msg.content}`)
-        .join('\n')
-    : '';
-
-  const prompt = `
-    Você é um assistente de configuração de CRM.
-    O usuário quer ajustar um board existente.
-
-    Board Atual: ${JSON.stringify(currentBoard)}
-    
-    Histórico da Conversa:
-    ${historyContext}
-
-    Instrução Atual do Usuário: "${userInstruction}"
-
-    Se a instrução do usuário for apenas uma conversa (ex: "olá", "qual meu nome", "obrigado") ou uma pergunta que NÃO requer alteração no board, retorne "board": null.
-
-    Se a instrução requerer alteração no board, faça as alterações no JSON.
-    Se o usuário pedir para mudar etapas, lembre-se de manter ou ajustar os 'linkedLifecycleStage' corretamente.
-    
-    REGRAS DE ESTRATÉGIA (CRÍTICO):
-    - Você DEVE manter ou atualizar os campos: "goal", "agentPersona" e "entryTrigger".
-    - Se a mudança no board afetar a estratégia (ex: mudou de Vendas para Suporte), ATUALIZE a estratégia (Meta, Agente, Gatilho) para combinar.
-    - Se a mudança for apenas visual ou menor, MANTENHA os dados de estratégia existentes.
-    - NUNCA remova esses campos do JSON.
-
-    REGRAS DE DESIGN (IMPORTANTE):
-    - Mantenha ou atribua cores ("color") para TODAS as etapas.
-    - Use classes Tailwind de background: bg-blue-500, bg-yellow-500, bg-purple-500, bg-orange-500, bg-green-500, bg-teal-500, bg-indigo-500, bg-pink-500.
-    - Tente seguir uma lógica de "esfriar" ou "esquentar" ou simplesmente diferenciar visualmente.
-    
-    IMPORTANTE:
-    1. Se precisar buscar informações externas (ex: "como funciona funil de vendas para X"), USE A BUSCA (se disponível) antes de responder.
-    2. CERTIFIQUE-SE de que o JSON retornado reflete EXATAMENTE as alterações que você descreveu na mensagem.
-    3. Retorne APENAS um JSON válido com o seguinte formato, sem markdown:
-    {
-      "message": "Explicação curta do que foi feito ou resposta à pergunta",
-      "board": { ...estrutura completa do board atualizada... } ou null
-    }
-    `;
-
-  let tools: Record<string, unknown> | undefined = undefined;
-  if (config?.search) {
-    if (provider === 'google') {
-      tools = { googleSearch: google.tools.googleSearch({}) };
-    } else if (provider === 'anthropic') {
-      tools = { web_search: anthropic.tools.webSearch_20250305({}) };
-    }
-  }
-
-  interface GoogleProviderOptions {
-    google?: {
-      thinkingConfig?: {
-        thinkingLevel?: 'high';
-        thinkingBudget?: number;
-        includeThoughts?: boolean;
-      };
-      useSearchGrounding?: boolean;
-    };
-  }
-
-  let providerOptions: GoogleProviderOptions = {};
-
-  // Google Provider Options
-  if (provider === 'google') {
-    providerOptions.google = {};
-
-    // Thinking Config
-    if (config?.thinking) {
-      if (modelId.includes('gemini-3')) {
-        providerOptions.google.thinkingConfig = { thinkingLevel: 'high', includeThoughts: true };
-      } else {
-        providerOptions.google.thinkingConfig = { thinkingBudget: 8192, includeThoughts: true };
-      }
-    }
-
-    // Search Grounding Config
-    if (config?.search) {
-      providerOptions.google.useSearchGrounding = true;
-    }
-  }
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
-      tools: tools as Parameters<typeof generateText>[0]['tools'],
-      providerOptions: providerOptions as Parameters<typeof generateText>[0]['providerOptions'],
-    });
-
-    const text = result.text;
-    // Extract JSON using regex to handle potential markdown or trailing text
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const jsonStr = jsonMatch
-      ? jsonMatch[0]
-      : text
-          .replace(/```json/g, '')
-          .replace(/```/g, '')
-          .trim();
-    const parsed = JSON.parse(jsonStr);
+    const result = await callAIProxy<{ message: string; board: GeneratedBoard | null }>(
+      'refineBoardWithAI',
+      { currentBoard, userInstruction, chatHistory }
+    );
 
     // SAFETY MERGE: If AI returns a board but misses strategy fields, merge from currentBoard
-    if (parsed.board) {
-      parsed.board = {
-        ...currentBoard, // Base on current to keep existing fields
-        ...parsed.board, // Overwrite with AI changes
-        // Ensure strategy fields exist (prioritize AI's if present, else keep current)
-        goal: parsed.board.goal || currentBoard.goal,
-        agentPersona: parsed.board.agentPersona || currentBoard.agentPersona,
-        entryTrigger: parsed.board.entryTrigger || currentBoard.entryTrigger,
+    if (result.board) {
+      result.board = {
+        ...currentBoard,
+        ...result.board,
+        goal: result.board.goal || currentBoard.goal,
+        agentPersona: result.board.agentPersona || currentBoard.agentPersona,
+        entryTrigger: result.board.entryTrigger || currentBoard.entryTrigger,
       };
     }
 
-    return parsed;
+    return result;
   } catch (error) {
     console.error('Error refining board:', error);
+    if (isConsentError(error)) {
+      throw new Error('Consentimento necessário para usar IA.');
+    }
     throw error;
   }
 };
 
+/**
+ * Resumo de deal para contexto do agente.
+ * 
+ * @interface DealSummary
+ * @property {string} id - ID único do deal.
+ * @property {string} title - Título do deal.
+ * @property {number} value - Valor monetário.
+ * @property {string} status - Status atual.
+ * @property {number} [probability] - Probabilidade de fechamento.
+ * @property {string} [contactName] - Nome do contato principal.
+ */
 interface DealSummary {
   id: string;
   title: string;
@@ -801,6 +715,29 @@ interface DealSummary {
   contactName?: string;
 }
 
+/**
+ * Chat com o agente de IA de um board específico.
+ * 
+ * O agente responde com a persona configurada e tem contexto
+ * completo das metas, deals e progresso do board.
+ * 
+ * @param message - Mensagem do usuário.
+ * @param boardContext - Contexto completo do board e seus deals.
+ * @param _config - Configuração de IA (deprecada, ignorada).
+ * @returns Promise com resposta do agente.
+ * 
+ * @example
+ * ```typescript
+ * const response = await chatWithBoardAgent(
+ *   'Como posso melhorar minha taxa de conversão?',
+ *   {
+ *     agentName: 'Sales Coach',
+ *     agentRole: 'Mentor de Vendas',
+ *     ...boardContext
+ *   }
+ * );
+ * ```
+ */
 export const chatWithBoardAgent = async (
   message: string,
   boardContext: {
@@ -814,58 +751,14 @@ export const chatWithBoardAgent = async (
     entryTrigger: string;
     dealsSummary: DealSummary[];
   },
-  config?: AIConfig
+  _config?: AIConfig
 ): Promise<string> => {
-  const provider = config?.provider || 'google';
-  const apiKey = config?.apiKey || '';
-  const modelId = config?.model || 'gemini-2.5-flash';
-
-  if (!apiKey) return 'Erro: API Key não configurada. Vá em Configurações > IA para adicionar.';
-
-  const model = getModel(provider, apiKey, modelId);
-
-  const prompt = `
-    Você é ${boardContext.agentName}, atuando como ${boardContext.agentRole}.
-    
-    SUA PERSONA:
-    ${boardContext.agentBehavior}
-    
-    SEU OBJETIVO NO BOARD:
-    ${boardContext.goalDescription}
-    KPI Principal: ${boardContext.goalKPI}
-    Meta: ${boardContext.goalTarget}
-    Atual: ${boardContext.goalCurrent}
-
-    CRITÉRIOS DE ENTRADA (QUEM DEVE ESTAR AQUI):
-    ${boardContext.entryTrigger}
-
-    CONTEXTO DOS NEGÓCIOS (Resumo):
-    ${JSON.stringify(boardContext.dealsSummary, null, 2)}
-
-    O USUÁRIO DISSE:
-    "${message}"
-
-    INSTRUÇÕES DE ESTILO:
-    1. SEJA DIRETO E OBJETIVO. Evite "blablabla" corporativo.
-    2. NÃO se apresente novamente (o usuário já sabe quem você é).
-    3. NÃO repita a meta inteira a cada mensagem, apenas se for relevante para o contexto.
-    4. Fale como um parceiro de trabalho, não como um robô ou um texto de marketing.
-    5. Máximo de 2 parágrafos curtos, a menos que seja uma lista.
-
-    INSTRUÇÕES DE CONTEÚDO:
-    1. Responda à pergunta do usuário usando os dados dos negócios.
-    2. Se o usuário perguntar "qual a boa?", destaque 1 ou 2 negócios que precisam de atenção imediata para bater a meta.
-    3. Cite os negócios pelo nome.
-  `;
-
   try {
-    const result = await generateText({
-      model,
-      prompt,
-    });
-    return result.text;
+    return await callAIProxy<string>('chatWithBoardAgent', { message, boardContext });
   } catch (error) {
     console.error('Error in chatWithBoardAgent:', error);
+    if (isConsentError(error)) return 'Consentimento necessário para usar IA.';
+    if (isRateLimitError(error)) return 'Limite de requisições atingido.';
     return 'Desculpe, estou tendo dificuldades para acessar os dados do board agora.';
   }
 };

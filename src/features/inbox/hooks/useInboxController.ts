@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Activity, Deal, DealStatus, DealView, Contact } from '@/types';
-import { ParsedAction, generateDailyBriefing } from '@/services/geminiService';
+import { ParsedAction } from '@/services/geminiService';
 import { useToast } from '@/context/ToastContext';
 import { usePersistedState } from '@/hooks/usePersistedState';
 import {
@@ -9,6 +9,7 @@ import {
   useUpdateActivity,
   useDeleteActivity,
 } from '@/lib/query/hooks/useActivitiesQuery';
+import { useAuth } from '@/context/AuthContext';
 import { useContacts } from '@/lib/query/hooks/useContactsQuery';
 import {
   useDealsView,
@@ -16,10 +17,12 @@ import {
   useUpdateDeal,
 } from '@/lib/query/hooks/useDealsQuery';
 import { useDefaultBoard } from '@/lib/query/hooks/useBoardsQuery';
-import { useRealtimeSync } from '@/lib/realtime';
+import { useRealtimeSync } from '@/lib/realtime/useRealtimeSync';
+import { useHiddenSuggestionIds, useRecordSuggestionInteraction } from '@/lib/query/hooks/useAISuggestionsQuery';
+import { SuggestionType } from '@/lib/supabase/aiSuggestions';
 
-// Tipos para sugestões de IA
-export type AISuggestionType = 'UPSELL' | 'RESCUE' | 'BIRTHDAY' | 'STALLED';
+// Tipos para sugestões de IA (BIRTHDAY removido - será implementado em widget separado)
+export type AISuggestionType = 'UPSELL' | 'RESCUE' | 'STALLED';
 
 export interface AISuggestion {
   id: string;
@@ -45,6 +48,9 @@ export interface FocusItem {
 }
 
 export const useInboxController = () => {
+  // Auth for tenant organization_id
+  const { profile } = useAuth();
+
   // TanStack Query hooks
   const { data: activities = [], isLoading: activitiesLoading } = useActivities();
   const { data: contacts = [], isLoading: contactsLoading } = useContacts();
@@ -61,14 +67,6 @@ export const useInboxController = () => {
   useRealtimeSync('activities');
   useRealtimeSync('deals');
 
-  // AI settings from localStorage (TODO: migrate to Supabase user_settings)
-  const [aiProvider] = usePersistedState<'google' | 'openai' | 'anthropic'>('crm_ai_provider', 'google');
-  const [aiApiKey] = usePersistedState<string>('crm_ai_api_key', '');
-  const [aiModel] = usePersistedState<string>('crm_ai_model', 'gemini-2.0-flash');
-  const [aiThinking] = usePersistedState<boolean>('crm_ai_thinking', false);
-  const [aiSearch] = usePersistedState<boolean>('crm_ai_search', false);
-  const [aiAnthropicCaching] = usePersistedState<boolean>('crm_ai_anthropic_caching', false);
-
   const activeBoardId = defaultBoard?.id || '';
   const activeBoard = defaultBoard;
 
@@ -78,10 +76,13 @@ export const useInboxController = () => {
   const [viewMode, setViewMode] = usePersistedState<ViewMode>('inbox_view_mode', 'list');
   const [focusIndex, setFocusIndex] = useState(0);
 
-  // State para briefing e sugestões
+  // Persisted AI suggestion interactions
+  const { data: hiddenSuggestionIds = new Set<string>() } = useHiddenSuggestionIds();
+  const recordInteraction = useRecordSuggestionInteraction();
+
+  // State para briefing
   const [briefing, setBriefing] = useState<string | null>(null);
   const [isGeneratingBriefing, setIsGeneratingBriefing] = useState(false);
-  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(new Set());
 
   const isLoading = activitiesLoading || contactsLoading || dealsLoading;
 
@@ -185,53 +186,111 @@ export const useInboxController = () => {
     [deals, thirtyDaysAgo]
   );
 
-  // Gerar sugestões de IA como objetos
+  // Clientes em risco de churn (inativos há > 30 dias)
+  const rescueContacts = useMemo(
+    () =>
+      contacts.filter(c => {
+        // Só considera contatos ativos
+        if (c.status !== 'ACTIVE') return false;
+
+        // Verifica última interação ou última compra
+        const lastInteraction = c.lastInteraction ? new Date(c.lastInteraction) : null;
+        const lastPurchase = c.lastPurchaseDate ? new Date(c.lastPurchaseDate) : null;
+
+        // Usa a data mais recente entre interação e compra
+        const lastActivity = lastInteraction && lastPurchase
+          ? (lastInteraction > lastPurchase ? lastInteraction : lastPurchase)
+          : lastInteraction || lastPurchase;
+
+        // Se não tem dados de atividade, considera em risco
+        if (!lastActivity) return true;
+
+        return lastActivity < thirtyDaysAgo;
+      }),
+    [contacts, thirtyDaysAgo]
+  );
+
+  // Smart Scoring: Calculate priority based on value, probability, and time
+  const calculateDealScore = (deal: DealView, type: 'STALLED' | 'UPSELL'): number => {
+    const value = deal.value || 0;
+    const probability = deal.probability || 50;
+    const daysSinceUpdate = Math.floor((Date.now() - new Date(deal.updatedAt).getTime()) / (1000 * 60 * 60 * 24));
+
+    // Base score from value (log scale to handle big differences)
+    const valueScore = Math.log10(Math.max(value, 1)) * 10;
+
+    // Probability factor (higher prob = higher urgency for stalled, lower for upsell)
+    const probFactor = type === 'STALLED' ? probability / 100 : (100 - probability) / 100;
+
+    // Time decay: older = more urgent
+    const timeFactor = Math.min(daysSinceUpdate / 30, 2); // Cap at 2x for very old deals
+
+    return (valueScore * probFactor * (1 + timeFactor));
+  };
+
+  // Gerar sugestões de IA como objetos com scoring inteligente
   const aiSuggestions = useMemo((): AISuggestion[] => {
     const suggestions: AISuggestion[] = [];
 
-    // Upsell
-    upsellDeals.forEach(deal => {
+    // Stalled/Rescue - Score and rank
+    const scoredStalledDeals = stalledDeals
+      .map(deal => ({ deal, score: calculateDealScore(deal, 'STALLED') }))
+      .sort((a, b) => b.score - a.score);
+
+    scoredStalledDeals.forEach(({ deal, score }) => {
+      const id = `stalled-${deal.id}`;
+      if (!hiddenSuggestionIds.has(id)) {
+        const daysSinceUpdate = Math.floor((Date.now() - new Date(deal.updatedAt).getTime()) / (1000 * 60 * 60 * 24));
+        suggestions.push({
+          id,
+          type: 'STALLED',
+          title: `Negócio Parado (${daysSinceUpdate}d)`,
+          description: `${deal.title} - R$ ${deal.value.toLocaleString('pt-BR')} • ${deal.probability}% probabilidade`,
+          priority: score > 30 ? 'high' : score > 15 ? 'medium' : 'low',
+          data: { deal },
+          createdAt: new Date().toISOString(),
+        });
+      }
+    });
+
+    // Upsell - Score and rank
+    const scoredUpsellDeals = upsellDeals
+      .map(deal => ({ deal, score: calculateDealScore(deal, 'UPSELL') }))
+      .sort((a, b) => b.score - a.score);
+
+    scoredUpsellDeals.forEach(({ deal, score }) => {
       const id = `upsell-${deal.id}`;
-      if (!dismissedSuggestions.has(id)) {
+      if (!hiddenSuggestionIds.has(id)) {
+        const daysSinceClose = Math.floor((Date.now() - new Date(deal.updatedAt).getTime()) / (1000 * 60 * 60 * 24));
         suggestions.push({
           id,
           type: 'UPSELL',
           title: `Oportunidade de Upsell`,
-          description: `${deal.companyName} fechou há mais de 30 dias. Hora de renovar?`,
-          priority: 'medium',
+          description: `${deal.companyName} fechou há ${daysSinceClose} dias • R$ ${deal.value.toLocaleString('pt-BR')}`,
+          priority: score > 25 ? 'high' : score > 10 ? 'medium' : 'low',
           data: { deal },
           createdAt: new Date().toISOString(),
         });
       }
     });
 
-    // Stalled/Rescue
-    stalledDeals.forEach(deal => {
-      const id = `stalled-${deal.id}`;
-      if (!dismissedSuggestions.has(id)) {
-        suggestions.push({
-          id,
-          type: 'STALLED',
-          title: `Negócio Parado`,
-          description: `${deal.title} está parado há mais de 7 dias. Risco de perda!`,
-          priority: 'high',
-          data: { deal },
-          createdAt: new Date().toISOString(),
-        });
-      }
-    });
+    // Clientes em risco de churn (RESCUE)
+    rescueContacts.forEach(contact => {
+      const id = `rescue-${contact.id}`;
+      if (!hiddenSuggestionIds.has(id)) {
+        const lastDate = contact.lastInteraction || contact.lastPurchaseDate;
+        const daysSince = lastDate
+          ? Math.floor((Date.now() - new Date(lastDate).getTime()) / (1000 * 60 * 60 * 24))
+          : null;
 
-    // Birthdays
-    birthdaysThisMonth.forEach(contact => {
-      const id = `birthday-${contact.id}`;
-      if (!dismissedSuggestions.has(id)) {
-        const day = contact.birthDate?.split('-')[2] || '??';
         suggestions.push({
           id,
-          type: 'BIRTHDAY',
-          title: `Aniversário`,
-          description: `${contact.name} faz aniversário dia ${day}. Envie parabéns!`,
-          priority: 'low',
+          type: 'RESCUE',
+          title: `Risco de Churn`,
+          description: daysSince
+            ? `${contact.name} não interage há ${daysSince} dias`
+            : `${contact.name} nunca interagiu - reative!`,
+          priority: daysSince && daysSince > 60 ? 'high' : 'medium',
           data: { contact },
           createdAt: new Date().toISOString(),
         });
@@ -242,37 +301,50 @@ export const useInboxController = () => {
       const priorityOrder = { high: 0, medium: 1, low: 2 };
       return priorityOrder[a.priority] - priorityOrder[b.priority];
     });
-  }, [upsellDeals, stalledDeals, birthdaysThisMonth, dismissedSuggestions]);
+  }, [upsellDeals, stalledDeals, rescueContacts, hiddenSuggestionIds]);
 
-  // --- Gerar Briefing ---
+  // --- Gerar Briefing via Edge Function (sem necessidade de API key no localStorage) ---
   useEffect(() => {
     let isMounted = true;
     const fetchBriefing = async () => {
       if (briefing) return;
-      if (!aiApiKey?.trim()) {
-        setBriefing('Configure sua chave de API em Configurações → Inteligência Artificial para ver o briefing diário.');
+
+      // Skip AI call if there's nothing to analyze (database empty or no pending items)
+      const hasData = birthdaysThisMonth.length > 0 || stalledDeals.length > 0 ||
+        overdueActivities.length > 0 || upsellDeals.length > 0;
+
+      if (!hasData) {
+        setBriefing('Sua inbox está limpa! Nenhuma pendência no momento. 🎉');
         return;
       }
+
       setIsGeneratingBriefing(true);
 
-      const radarData = {
-        birthdays: birthdaysThisMonth,
-        stalledDeals: stalledDeals.length,
-        overdueActivities: overdueActivities.length,
-        upsellDeals: upsellDeals.length,
-      };
+      try {
+        const radarData = {
+          birthdays: birthdaysThisMonth.map(c => ({ name: c.name, birthDate: c.birthDate })),
+          stalledDeals: stalledDeals.length,
+          overdueActivities: overdueActivities.length,
+          upsellDeals: upsellDeals.length,
+        };
 
-      const text = await generateDailyBriefing(radarData, {
-        provider: aiProvider,
-        apiKey: aiApiKey,
-        model: aiModel,
-        thinking: aiThinking,
-        search: aiSearch,
-        anthropicCaching: aiAnthropicCaching,
-      });
-      if (isMounted) {
-        setBriefing(text);
-        setIsGeneratingBriefing(false);
+        // Import dynamically to avoid circular dependency
+        const { callAIProxy } = await import('@/lib/supabase/ai-proxy');
+        const text = await callAIProxy<string>('generateDailyBriefing', { radarData });
+
+        if (isMounted) {
+          setBriefing(text || 'Nenhuma pendência crítica. Bom trabalho!');
+        }
+      } catch (error: any) {
+        if (isMounted) {
+          // Fallback message if AI proxy fails
+          const fallback = `Você tem ${overdueActivities.length} atividades atrasadas, ${stalledDeals.length} negócios parados e ${upsellDeals.length} oportunidades de upsell.`;
+          setBriefing(fallback);
+        }
+      } finally {
+        if (isMounted) {
+          setIsGeneratingBriefing(false);
+        }
       }
     };
 
@@ -280,7 +352,7 @@ export const useInboxController = () => {
     return () => {
       isMounted = false;
     };
-  }, []);
+  }, [birthdaysThisMonth.length, stalledDeals.length, overdueActivities.length, upsellDeals.length]);
 
   // --- Handlers para Atividades ---
 
@@ -288,20 +360,22 @@ export const useInboxController = () => {
     let contactId = undefined;
     if (action.contactName) {
       const found = contacts.find(c =>
-        c.name.toLowerCase().includes(action.contactName!.toLowerCase())
+        (c.name || '').toLowerCase().includes(action.contactName!.toLowerCase())
       );
       if (found) contactId = found.id;
     }
 
     createActivityMutation.mutate({
-      title: action.title,
-      type: action.type,
-      description: '',
-      date: action.date || new Date().toISOString(),
-      dealId: '',
-      dealTitle: '',
-      completed: false,
-      user: { name: 'Eu', avatar: '' },
+      activity: {
+        title: action.title,
+        type: action.type,
+        description: '',
+        date: action.date || new Date().toISOString(),
+        dealId: '',
+        dealTitle: '',
+        completed: false,
+        user: { name: 'Eu', avatar: '' },
+      },
     });
 
     showToast(`Atividade criada: ${action.title}`, 'success');
@@ -382,33 +456,68 @@ export const useInboxController = () => {
         }
         break;
 
-      case 'BIRTHDAY':
+      case 'RESCUE':
         if (suggestion.data.contact) {
           createActivityMutation.mutate({
-            title: `Enviar parabéns para ${suggestion.data.contact.name}`,
-            type: 'TASK',
-            description: 'Aniversário detectado pela IA',
-            date: new Date().toISOString(),
-            dealId: '',
-            dealTitle: '',
-            completed: false,
-            user: { name: 'Eu', avatar: '' },
+            activity: {
+              title: `Reativar cliente: ${suggestion.data.contact.name}`,
+              type: 'CALL',
+              description: 'Cliente em risco de churn - ligar para reativar',
+              date: new Date().toISOString(),
+              dealId: '',
+              dealTitle: '',
+              completed: false,
+              user: { name: 'Eu', avatar: '' },
+            },
           });
-          showToast('Tarefa criada: Enviar parabéns', 'success');
+          showToast('Tarefa de reativação criada!', 'success');
         }
         break;
     }
-
-    setDismissedSuggestions(prev => new Set([...prev, suggestion.id]));
+    // Persist to database
+    const entityType = suggestion.data.deal ? 'deal' : 'contact';
+    const entityId = suggestion.data.deal?.id || suggestion.data.contact?.id || '';
+    recordInteraction.mutate({
+      suggestionType: suggestion.type as SuggestionType,
+      entityType,
+      entityId,
+      action: 'ACCEPTED',
+    });
   };
 
   const handleDismissSuggestion = (suggestionId: string) => {
-    setDismissedSuggestions(prev => new Set([...prev, suggestionId]));
+    // Parse suggestionId format: "type-entityId" (e.g., "stalled-abc123")
+    const [typeStr, entityId] = suggestionId.split('-');
+    const suggestionType = typeStr.toUpperCase() as SuggestionType;
+    const suggestion = aiSuggestions.find(s => s.id === suggestionId);
+    const entityType = suggestion?.data.deal ? 'deal' : 'contact';
+
+    recordInteraction.mutate({
+      suggestionType,
+      entityType,
+      entityId,
+      action: 'DISMISSED',
+    });
     showToast('Sugestão descartada', 'info');
   };
 
   const handleSnoozeSuggestion = (suggestionId: string) => {
-    setDismissedSuggestions(prev => new Set([...prev, suggestionId]));
+    // Parse suggestionId format: "type-entityId"
+    const [typeStr, entityId] = suggestionId.split('-');
+    const suggestionType = typeStr.toUpperCase() as SuggestionType;
+    const suggestion = aiSuggestions.find(s => s.id === suggestionId);
+    const entityType = suggestion?.data.deal ? 'deal' : 'contact';
+
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    recordInteraction.mutate({
+      suggestionType,
+      entityType,
+      entityId,
+      action: 'SNOOZED',
+      snoozedUntil: tomorrow,
+    });
     showToast('Sugestão adiada para amanhã', 'info');
   };
 
@@ -585,6 +694,7 @@ export const useInboxController = () => {
     // Focus Mode
     focusQueue,
     focusIndex,
+    setFocusIndex,
     currentFocusItem,
     handleFocusNext,
     handleFocusPrev,
@@ -605,5 +715,12 @@ export const useInboxController = () => {
     handleAcceptSuggestion,
     handleDismissSuggestion,
     handleSnoozeSuggestion,
+    handleSelectActivity: (id: string) => {
+      const index = focusQueue.findIndex(item => item.id === id);
+      if (index !== -1) {
+        setFocusIndex(index);
+        setViewMode('focus');
+      }
+    },
   };
 };

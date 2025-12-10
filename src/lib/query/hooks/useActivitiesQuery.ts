@@ -9,6 +9,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../index';
 import { activitiesService } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 import type { Activity } from '@/types';
 
 // ============ QUERY HOOKS ============
@@ -23,8 +24,11 @@ export interface ActivitiesFilters {
 
 /**
  * Hook to fetch all activities with optional filters
+ * Waits for auth to be ready before fetching to ensure RLS works correctly
  */
 export const useActivities = (filters?: ActivitiesFilters) => {
+  const { user, loading: authLoading } = useAuth();
+
   return useQuery({
     queryKey: filters
       ? queryKeys.activities.list(filters as Record<string, unknown>)
@@ -58,6 +62,7 @@ export const useActivities = (filters?: ActivitiesFilters) => {
 
       return activities;
     },
+    enabled: !authLoading && !!user, // Only fetch when auth is ready
     staleTime: 1 * 60 * 1000, // 1 minute - activities change frequently
   });
 };
@@ -110,20 +115,24 @@ export const useTodayActivities = () => {
 
 // ============ MUTATION HOOKS ============
 
+interface CreateActivityParams {
+  activity: Omit<Activity, 'id' | 'createdAt'>;
+}
+
 /**
  * Hook to create a new activity
+ * Requires organizationId (tenant) for RLS compliance
  */
 export const useCreateActivity = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async (activity: Omit<Activity, 'id' | 'createdAt'>) => {
-      // company_id will be auto-set by trigger
-      const { data, error } = await activitiesService.create(activity, '');
+    mutationFn: async ({ activity }: CreateActivityParams) => {
+      const { data, error } = await activitiesService.create(activity);
       if (error) throw error;
       return data!;
     },
-    onMutate: async newActivity => {
+    onMutate: async ({ activity: newActivity }) => {
       await queryClient.cancelQueries({ queryKey: queryKeys.activities.all });
       const previousActivities = queryClient.getQueryData<Activity[]>(queryKeys.activities.lists());
 
@@ -138,7 +147,7 @@ export const useCreateActivity = () => {
       ]);
       return { previousActivities };
     },
-    onError: (_error, _newActivity, context) => {
+    onError: (_error, _params, context) => {
       if (context?.previousActivities) {
         queryClient.setQueryData(queryKeys.activities.lists(), context.previousActivities);
       }

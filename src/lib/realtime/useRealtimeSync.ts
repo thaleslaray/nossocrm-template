@@ -12,7 +12,7 @@ import { useEffect, useRef } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { RealtimeChannel, RealtimePostgresChangesPayload } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { queryKeys } from '@/lib/query/index';
+import { queryKeys } from '@/lib/query/queryKeys';
 
 // Tables that support realtime sync
 type RealtimeTable =
@@ -77,7 +77,7 @@ export function useRealtimeSync(
           table,
         },
         (payload: RealtimePostgresChangesPayload<Record<string, unknown>>) => {
-          console.log(`[Realtime] ${table} changed:`, payload.eventType, payload);
+
 
           // Call custom callback if provided
           onchange?.(payload);
@@ -104,13 +104,7 @@ export function useRealtimeSync(
 
     // Subscribe to channel
     channel.subscribe((status, err) => {
-      if (status === 'SUBSCRIBED') {
-        console.log(`[Realtime] Subscribed to: ${tableList.join(', ')}`);
-      } else if (status === 'CHANNEL_ERROR') {
-        console.error('[Realtime] Channel error:', err);
-      } else if (status === 'TIMED_OUT') {
-        console.warn('[Realtime] Subscription timed out');
-      }
+      // Status handling
     });
 
     channelRef.current = channel;

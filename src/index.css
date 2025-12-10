@@ -6,6 +6,170 @@
   body {
     font-family: 'Inter', sans-serif;
   }
+
+  /* ========================================
+   * OKLCH Color System
+   * Perceptually uniform colors for better UX
+   * ======================================== */
+
+  :root {
+    /* Light Mode - Soft Cream (OKLCH) */
+    --color-bg: oklch(97% 0.005 90);
+    --color-surface: oklch(99% 0.002 90);
+    --color-muted: oklch(95% 0.008 90);
+    --color-border: oklch(90% 0.01 90);
+    --color-border-subtle: oklch(93% 0.008 90);
+
+    /* Status Colors - Light Mode */
+    --color-success: oklch(65% 0.17 145);
+    /* green-500 equivalent */
+    --color-success-hover: oklch(60% 0.18 145);
+    /* green-600 equivalent */
+    --color-success-bg: oklch(65% 0.17 145 / 0.1);
+    --color-success-text: oklch(40% 0.15 145);
+    /* green-700 for light mode */
+
+    --color-warning: oklch(75% 0.15 85);
+    /* yellow-500 equivalent */
+    --color-warning-hover: oklch(70% 0.16 85);
+    /* yellow-600 equivalent */
+    --color-warning-bg: oklch(75% 0.15 85 / 0.1);
+    --color-warning-text: oklch(50% 0.14 85);
+    /* yellow-700 for light mode */
+
+    --color-error: oklch(62% 0.25 25);
+    /* red-500 equivalent */
+    --color-error-hover: oklch(58% 0.26 25);
+    /* red-600 equivalent */
+    --color-error-bg: oklch(62% 0.25 25 / 0.1);
+    --color-error-text: oklch(45% 0.23 25);
+    /* red-700 for light mode */
+
+    --color-info: oklch(60% 0.20 240);
+    /* blue-500 equivalent */
+    --color-info-hover: oklch(55% 0.21 240);
+    /* blue-600 equivalent */
+    --color-info-bg: oklch(60% 0.20 240 / 0.1);
+    --color-info-text: oklch(40% 0.18 240);
+    /* blue-700 for light mode */
+
+    --color-orange: oklch(70% 0.18 55);
+    /* orange-500 equivalent */
+    --color-orange-bg: oklch(70% 0.18 55 / 0.1);
+    --color-orange-text: oklch(48% 0.16 55);
+    /* orange-700 for light mode */
+
+    /* Text Colors - Light Mode */
+    --color-text-primary: oklch(25% 0.015 260);
+    /* slate-900 */
+    --color-text-secondary: oklch(45% 0.02 260);
+    /* slate-600 */
+    --color-text-muted: oklch(55% 0.025 260);
+    /* slate-500 */
+    --color-text-subtle: oklch(62% 0.025 260);
+    /* slate-400 */
+
+    /* Glass effect - Light */
+    --glass-bg: oklch(99% 0.002 90 / 0.8);
+    --glass-border: oklch(90% 0.01 90 / 0.5);
+    --glass-blur: 10px;
+
+    /* Dots background */
+    --dots-color: oklch(85% 0.01 90);
+
+    /* Chart Colors */
+    --chart-text: #64748b;
+    /* slate-500 */
+    --chart-grid: rgba(148, 163, 184, 0.1);
+    --chart-tooltip-bg: #0f172a;
+    /* slate-900 (keeping dark tooltip in light mode for contrast, or stick to theme?) */
+    /* Let's make tooltip dark by default as per original design, or use #fff for light mode? */
+    /* Original was #0f172a (dark) even in light mode? No, original had hardcoded hex. */
+    /* Let's follow original design: Dark tooltip is common. */
+    --chart-tooltip-bg: #0f172a;
+    --chart-tooltip-border: rgba(255, 255, 255, 0.1);
+    --chart-tooltip-text: #f8fafc;
+  }
+
+  .dark {
+    /* Dark Mode - Deep Slate (OKLCH) 
+       Ajustado para corresponder às cores originais:
+       - #020617 (slate-950) → L~11%
+       - #0f172a (slate-900) → L~15%
+       - #1e293b (slate-800) → L~22%
+    */
+    --color-bg: oklch(11% 0.025 260);
+    --color-surface: oklch(15% 0.02 260);
+    --color-muted: oklch(22% 0.015 260);
+    --color-border: oklch(26% 0.012 260);
+    --color-border-subtle: oklch(22% 0.01 260 / 0.6);
+
+    /* Status Colors - Dark Mode (slightly more vibrant) */
+    --color-success: oklch(70% 0.17 145);
+    /* green-400 equivalent */
+    --color-success-hover: oklch(65% 0.17 145);
+    /* green-500 equivalent */
+    --color-success-bg: oklch(70% 0.17 145 / 0.1);
+    --color-success-text: oklch(70% 0.17 145);
+    /* green-400 for dark mode */
+
+    --color-warning: oklch(80% 0.14 85);
+    /* yellow-400 equivalent */
+    --color-warning-hover: oklch(75% 0.15 85);
+    /* yellow-500 equivalent */
+    --color-warning-bg: oklch(80% 0.14 85 / 0.1);
+    --color-warning-text: oklch(80% 0.14 85);
+    /* yellow-400 for dark mode */
+
+    --color-error: oklch(68% 0.24 25);
+    /* red-400 equivalent */
+    --color-error-hover: oklch(62% 0.25 25);
+    /* red-500 equivalent */
+    --color-error-bg: oklch(68% 0.24 25 / 0.1);
+    --color-error-text: oklch(68% 0.24 25);
+    /* red-400 for dark mode */
+
+    --color-info: oklch(70% 0.19 240);
+    /* blue-400 equivalent */
+    --color-info-hover: oklch(60% 0.20 240);
+    /* blue-500 equivalent */
+    --color-info-bg: oklch(70% 0.19 240 / 0.1);
+    --color-info-text: oklch(70% 0.19 240);
+    /* blue-400 for dark mode */
+
+    --color-orange: oklch(75% 0.17 55);
+    /* orange-400 equivalent */
+    --color-orange-bg: oklch(75% 0.17 55 / 0.1);
+    --color-orange-text: oklch(75% 0.17 55);
+    /* orange-400 for dark mode */
+
+    /* Text Colors - Dark Mode */
+    --color-text-primary: oklch(98% 0.002 260);
+    /* white */
+    --color-text-secondary: oklch(83% 0.015 260);
+    /* slate-300 */
+    --color-text-muted: oklch(72% 0.02 260);
+    /* slate-400 */
+    --color-text-subtle: oklch(62% 0.025 260);
+    /* slate-500 */
+
+    /* Glass effect - Dark */
+    --glass-bg: oklch(15% 0.02 260 / 0.75);
+    --glass-border: oklch(100% 0 0 / 0.05);
+    --glass-blur: 12px;
+
+    /* Dots background */
+    --dots-color: oklch(22% 0.012 260);
+
+    /* Chart Colors */
+    --chart-text: #94a3b8;
+    /* slate-400 */
+    --chart-grid: rgba(255, 255, 255, 0.1);
+    --chart-tooltip-bg: #1e293b;
+    /* slate-800 */
+    --chart-tooltip-border: rgba(255, 255, 255, 0.1);
+    --chart-tooltip-text: #f8fafc;
+  }
 }
 
 @layer utilities {
@@ -40,27 +204,130 @@
     background: #475569;
   }
 
-  /* Dot Pattern Background */
+  /* Dot Pattern Background - Uses OKLCH variables */
   .bg-dots {
-    background-image: radial-gradient(#334155 1px, transparent 1px);
+    background-image: radial-gradient(var(--dots-color) 1px, transparent 1px);
     background-size: 24px 24px;
   }
 
-  .dark .bg-dots {
-    background-image: radial-gradient(#1e293b 1px, transparent 1px);
-  }
-
-  /* Glassmorphism Utilities */
+  /* Glassmorphism Utilities - Uses OKLCH variables */
   .glass {
-    background: rgba(255, 255, 255, 0.7);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    background: var(--glass-bg);
+    backdrop-filter: blur(var(--glass-blur));
+    -webkit-backdrop-filter: blur(var(--glass-blur));
+    border-color: var(--glass-border);
   }
 
-  .dark .glass {
-    background: rgba(15, 23, 42, 0.6);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    border: 1px solid rgba(255, 255, 255, 0.05);
+  /* ========================================
+   * Accessibility (a11y) Utilities
+   * WCAG 2.1 AA Compliance
+   * ======================================== */
+
+  /* Screen reader only - Visually hidden but accessible */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
   }
-}
+
+  /* Make sr-only visible when focused (skip links) */
+  .sr-only-focusable:focus,
+  .sr-only-focusable:focus-within {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: 0.5rem 1rem;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+
+  /* Focus ring with high contrast (WCAG AA compliant - 3:1 minimum) */
+  .focus-visible-ring:focus-visible {
+    outline: 2px solid #2563eb;
+    outline-offset: 2px;
+  }
+
+  .dark .focus-visible-ring:focus-visible {
+    outline-color: #60a5fa;
+  }
+
+  /* High contrast focus for critical interactive elements */
+  .focus-visible-high:focus-visible {
+    outline: 3px solid #1d4ed8;
+    outline-offset: 2px;
+    box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.3);
+  }
+
+  .dark .focus-visible-high:focus-visible {
+    outline-color: #93c5fd;
+    box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.3);
+  }
+
+  /* Skip link styling */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    z-index: 9999;
+    padding: 0.75rem 1.5rem;
+    background-color: #1e40af;
+    color: #ffffff;
+    font-weight: 600;
+    text-decoration: none;
+    border-radius: 0 0 0.5rem 0;
+    transition: left 0.15s ease-in-out;
+  }
+
+  .skip-link:focus {
+    left: 0;
+    outline: 3px solid #60a5fa;
+    outline-offset: 2px;
+  }
+
+  .dark .skip-link {
+    background-color: #3b82f6;
+  }
+
+  /* Live region for screen reader announcements */
+  .live-region {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  /* Reduced motion preference */
+  @media (prefers-reduced-motion: reduce) {
+
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /* High contrast mode adjustments */
+  @media (prefers-contrast: more) {
+
+    .focus-visible-ring:focus-visible,
+    .focus-visible-high:focus-visible {
+      outline-width: 3px;
+      outline-style: solid;
+    }
+  }
+}@keyframes ping { 75%, 100% { transform: scale(2); opacity: 0; } }

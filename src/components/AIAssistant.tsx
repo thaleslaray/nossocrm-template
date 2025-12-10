@@ -1,3 +1,30 @@
+/**
+ * @fileoverview Assistente de IA com Chat
+ * 
+ * Componente de chat com IA que suporta múltiplos modos de operação:
+ * - Modo Global: Assistente geral com acesso a todos os dados do CRM
+ * - Modo Board: Agente especializado no contexto de um board específico
+ * 
+ * @module components/AIAssistant
+ * 
+ * Funcionalidades:
+ * - Chat em tempo real com streaming de respostas
+ * - Suporte a anexos (imagens e áudio)
+ * - Gravação de áudio com transcrição
+ * - Personas configuráveis por board
+ * - Histórico persistido por sessão
+ * 
+ * @example
+ * ```tsx
+ * <AIAssistant
+ *   isOpen={showAI}
+ *   onClose={() => setShowAI(false)}
+ *   variant="sidebar"
+ *   activeBoard={currentBoard}
+ * />
+ * ```
+ */
+
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -12,12 +39,21 @@ import {
   StopCircle,
   Settings,
   Sparkles,
+  Shield,
 } from 'lucide-react';
 import { useCRM } from '../context/CRMContext';
 import { Board } from '@/types';
 import { useAgent, Message, Attachment } from '@/hooks/useAgent';
-import AudioPlayer from '@/components/ui/AudioPlayer';
 
+/**
+ * Props do componente AIAssistant
+ * 
+ * @interface AIAssistantProps
+ * @property {boolean} isOpen - Se o assistente está visível
+ * @property {() => void} onClose - Callback para fechar
+ * @property {'overlay' | 'sidebar'} [variant='overlay'] - Modo de exibição
+ * @property {Board | null} [activeBoard] - Board ativo para modo especializado
+ */
 interface AIAssistantProps {
   isOpen: boolean;
   onClose: () => void;
@@ -25,8 +61,18 @@ interface AIAssistantProps {
   activeBoard?: Board | null;
 }
 
+/** Modo de operação do agente */
 type AgentMode = 'global' | 'board';
 
+/**
+ * Assistente de IA com suporte a chat e anexos
+ * 
+ * Renderiza interface de chat com streaming de respostas da IA.
+ * Suporta modo global (acesso a todo CRM) e modo board (contexto específico).
+ * 
+ * @param {AIAssistantProps} props - Props do componente
+ * @returns {JSX.Element | null} Interface do assistente ou null se fechado
+ */
 const AIAssistant: React.FC<AIAssistantProps> = ({
   isOpen,
   onClose,
@@ -40,11 +86,14 @@ const AIAssistant: React.FC<AIAssistantProps> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+
+
   // Attachments State
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const hasTranscriptionRef = useRef(false);
 
   // Determine active agent details
   const activeAgentName =
@@ -273,22 +322,26 @@ const AIAssistant: React.FC<AIAssistantProps> = ({
       };
 
       mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const base64Audio = reader.result as string;
-          setAttachments(prev => [
-            ...prev,
-            {
-              id: crypto.randomUUID(),
-              type: 'audio',
-              url: base64Audio,
-              name: 'Audio Message',
-              mimeType: 'audio/webm',
-            },
-          ]);
-        };
-        reader.readAsDataURL(audioBlob);
+        // Só adiciona attachment de áudio se NÃO houve transcrição
+        // Quando há transcrição, o texto já foi preenchido no input e será enviado
+        if (!hasTranscriptionRef.current) {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const base64Audio = reader.result as string;
+            setAttachments(prev => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                type: 'audio',
+                url: base64Audio,
+                name: 'Audio Message',
+                mimeType: 'audio/webm',
+              },
+            ]);
+          };
+          reader.readAsDataURL(audioBlob);
+        }
 
         // Stop all tracks
         stream.getTracks().forEach(track => track.stop());
@@ -296,6 +349,7 @@ const AIAssistant: React.FC<AIAssistantProps> = ({
 
       mediaRecorder.start();
       setIsRecording(true);
+      hasTranscriptionRef.current = false; // Reset para nova gravação
 
       // Start Speech Recognition (Transcription)
       if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
@@ -324,6 +378,7 @@ const AIAssistant: React.FC<AIAssistantProps> = ({
           }
           // Update input with transcript
           if (transcript) {
+            hasTranscriptionRef.current = true; // Marca que houve transcrição
             setInput(prev => {
               // Avoid duplicating if already present (basic check)
               if (prev.endsWith(transcript)) return prev;
@@ -447,10 +502,10 @@ const AIAssistant: React.FC<AIAssistantProps> = ({
                           className="max-w-full h-auto rounded-lg"
                         />
                       ) : att.type === 'audio' ? (
-                        <AudioPlayer
-                          src={att.url}
-                          variant={msg.role === 'user' ? 'sent' : 'received'}
-                        />
+                        <div className="flex items-center gap-2 px-3 py-2 bg-slate-100 dark:bg-slate-700/50 rounded-lg">
+                          <Mic size={16} className="text-purple-500" />
+                          <span className="text-sm text-slate-600 dark:text-slate-300">Áudio anexado</span>
+                        </div>
                       ) : null}
                     </div>
                   ))}
@@ -532,7 +587,7 @@ const AIAssistant: React.FC<AIAssistantProps> = ({
             {attachments.map(att => (
               <div
                 key={att.id}
-                className={`relative group shrink-0 ${att.type === 'audio' ? 'min-w-[260px]' : ''}`}
+                className="relative group shrink-0"
               >
                 {att.type === 'image' ? (
                   <img
@@ -541,8 +596,9 @@ const AIAssistant: React.FC<AIAssistantProps> = ({
                     className="w-16 h-16 object-cover rounded-lg border border-slate-200 dark:border-white/10"
                   />
                 ) : att.type === 'audio' ? (
-                  <div className="pr-6">
-                    <AudioPlayer src={att.url} variant="preview" />
+                  <div className="flex items-center gap-2 px-3 py-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-500/20">
+                    <Mic size={16} className="text-purple-500" />
+                    <span className="text-sm text-purple-700 dark:text-purple-300">Áudio gravado</span>
                   </div>
                 ) : (
                   <div className="w-16 h-16 flex items-center justify-center bg-slate-100 dark:bg-white/5 rounded-lg border border-slate-200 dark:border-white/10">

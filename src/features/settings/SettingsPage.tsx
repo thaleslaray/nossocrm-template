@@ -40,6 +40,7 @@ const GeneralSettings: React.FC = () => {
             Escolha qual tela deve abrir quando você iniciar o CRM.
           </p>
           <select
+            aria-label="Selecionar página inicial"
             value={controller.defaultRoute}
             onChange={(e) => controller.setDefaultRoute(e.target.value)}
             className="w-full max-w-xs px-4 py-2.5 bg-slate-50 dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 text-slate-900 dark:text-white transition-all"
@@ -83,7 +84,6 @@ const GeneralSettings: React.FC = () => {
       <WebhooksSection />
 
       <AIConfigSection />
-
 
     </div>
   );

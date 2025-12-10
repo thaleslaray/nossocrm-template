@@ -1,7 +1,10 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { ChevronDown, ChevronRight, ArrowRight } from 'lucide-react';
 import { Activity } from '@/types';
 import { InboxItem } from './InboxItem';
+
+const MAX_ITEMS = 5;
 
 interface InboxSectionProps {
   title: string;
@@ -11,16 +14,20 @@ interface InboxSectionProps {
   onToggleComplete: (id: string) => void;
   onSnooze?: (id: string) => void;
   onDiscard?: (id: string) => void;
+  onSelect?: (id: string) => void;
+  filterParam?: string; // e.g., 'overdue', 'today', 'upcoming'
 }
 
-export const InboxSection: React.FC<InboxSectionProps> = ({ 
-  title, 
-  activities, 
-  color, 
+export const InboxSection: React.FC<InboxSectionProps> = ({
+  title,
+  activities,
+  color,
   defaultOpen = true,
   onToggleComplete,
   onSnooze,
-  onDiscard
+  onDiscard,
+  onSelect,
+  filterParam
 }) => {
   const [isOpen, setIsOpen] = useState(defaultOpen);
 
@@ -32,9 +39,13 @@ export const InboxSection: React.FC<InboxSectionProps> = ({
     slate: 'text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-800 border-slate-100 dark:border-slate-700'
   };
 
+  const visibleActivities = activities.slice(0, MAX_ITEMS);
+  const hasMore = activities.length > MAX_ITEMS;
+  const remaining = activities.length - MAX_ITEMS;
+
   return (
     <div className="mb-6">
-      <button 
+      <button
         onClick={() => setIsOpen(!isOpen)}
         className="flex items-center gap-2 w-full mb-3 group"
       >
@@ -52,15 +63,26 @@ export const InboxSection: React.FC<InboxSectionProps> = ({
 
       {isOpen && (
         <div className="space-y-3 pl-2">
-          {activities.map(activity => (
-            <InboxItem 
-              key={activity.id} 
-              activity={activity} 
+          {visibleActivities.map(activity => (
+            <InboxItem
+              key={activity.id}
+              activity={activity}
               onToggleComplete={onToggleComplete}
               onSnooze={onSnooze}
               onDiscard={onDiscard}
+              onSelect={onSelect}
             />
           ))}
+
+          {hasMore && (
+            <Link
+              to={filterParam ? `/activities?filter=${filterParam}` : '/activities'}
+              className="flex items-center justify-center gap-2 py-3 px-4 text-sm font-medium text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-500/10 rounded-lg transition-colors"
+            >
+              Ver todas as {activities.length} atividades
+              <ArrowRight size={16} />
+            </Link>
+          )}
         </div>
       )}
     </div>

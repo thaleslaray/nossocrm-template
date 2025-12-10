@@ -56,8 +56,9 @@ export const CustomFieldsManager: React.FC<CustomFieldsManagerProps> = ({
             />
           </div>
           <div className="w-40">
-            <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo</label>
+            <label htmlFor="custom-field-type" className="block text-xs font-bold text-slate-500 uppercase mb-1">Tipo</label>
             <select
+              id="custom-field-type"
               value={newFieldType}
               onChange={(e) => setNewFieldType(e.target.value as CustomFieldType)}
               className="w-full bg-white dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary-500 dark:text-white"

@@ -1,9 +1,17 @@
 /**
  * Reusable Modal component with consistent styling
+ * 
+ * Accessibility Features:
+ * - role="dialog" and aria-modal="true" for screen readers
+ * - aria-labelledby pointing to modal title
+ * - Focus trap to keep keyboard focus within modal
+ * - Focus returns to trigger element on close
+ * - Escape key closes modal
  */
-import React from 'react';
+import React, { useId, useCallback, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/utils/cn';
+import { FocusTrap, useFocusReturn } from '@/lib/a11y';
 
 interface ModalProps {
   isOpen: boolean;
@@ -11,6 +19,12 @@ interface ModalProps {
   title: string;
   children: React.ReactNode;
   size?: 'sm' | 'md' | 'lg' | 'xl';
+  /** Optional ID for aria-labelledby (auto-generated if not provided) */
+  labelledById?: string;
+  /** Optional ID for aria-describedby */
+  describedById?: string;
+  /** Initial element to focus (CSS selector or false to disable) */
+  initialFocus?: string | false;
 }
 
 const sizeClasses = {
@@ -20,32 +34,83 @@ const sizeClasses = {
   xl: 'max-w-xl',
 };
 
-export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, children, size = 'md' }) => {
+export const Modal: React.FC<ModalProps> = ({ 
+  isOpen, 
+  onClose, 
+  title, 
+  children, 
+  size = 'md',
+  labelledById,
+  describedById,
+  initialFocus,
+}) => {
+  // Generate unique ID for title if not provided
+  const generatedId = useId();
+  const titleId = labelledById || `modal-title-${generatedId}`;
+  
+  // Restore focus to trigger element on close
+  useFocusReturn({ enabled: isOpen });
+
+  // Handle Escape key
+  const handleEscape = useCallback(() => {
+    onClose();
+  }, [onClose]);
+
+  // Handle backdrop click
+  const handleBackdropClick = useCallback((e: React.MouseEvent) => {
+    if (e.target === e.currentTarget) {
+      onClose();
+    }
+  }, [onClose]);
+
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-      <div
-        className={cn(
-          'bg-white dark:bg-dark-card',
-          'border border-slate-200 dark:border-white/10',
-          'rounded-2xl shadow-2xl w-full',
-          'animate-in zoom-in-95 duration-200',
-          sizeClasses[size]
-        )}
+    <FocusTrap 
+      active={isOpen} 
+      onEscape={handleEscape}
+      initialFocus={initialFocus}
+      returnFocus={true}
+    >
+      <div 
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+        onClick={handleBackdropClick}
+        aria-hidden="false"
       >
-        <div className="p-5 border-b border-slate-200 dark:border-white/10 flex justify-between items-center">
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display">{title}</h2>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors"
-          >
-            <X size={20} />
-          </button>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          aria-describedby={describedById}
+          className={cn(
+            'bg-white dark:bg-dark-card',
+            'border border-slate-200 dark:border-white/10',
+            'rounded-2xl shadow-2xl w-full',
+            'animate-in zoom-in-95 duration-200',
+            sizeClasses[size]
+          )}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="p-5 border-b border-slate-200 dark:border-white/10 flex justify-between items-center">
+            <h2 
+              id={titleId}
+              className="text-lg font-bold text-slate-900 dark:text-white font-display"
+            >
+              {title}
+            </h2>
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Fechar modal"
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors focus-visible-ring rounded-lg p-1"
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="p-5">{children}</div>
         </div>
-        <div className="p-5">{children}</div>
       </div>
-    </div>
+    </FocusTrap>
   );
 };
 

@@ -9,7 +9,7 @@ export const useSettingsController = () => {
   const { addToast } = useToast();
 
   // General Settings
-  const [defaultRoute, setDefaultRoute] = usePersistedState<string>('crm_default_route', '/');
+  const [defaultRoute, setDefaultRoute] = usePersistedState<string>('crm_default_route', '/boards');
 
   // Custom Fields State (local - TODO: migrate to Supabase)
   const [customFieldDefinitions, setCustomFieldDefinitions] = usePersistedState<
@@ -45,9 +45,9 @@ export const useSettingsController = () => {
     const optionsArray =
       newFieldType === 'select'
         ? newFieldOptions
-            .split(',')
-            .map(opt => opt.trim())
-            .filter(opt => opt !== '')
+          .split(',')
+          .map(opt => opt.trim())
+          .filter(opt => opt !== '')
         : undefined;
 
     if (editingId) {

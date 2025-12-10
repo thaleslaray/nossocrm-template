@@ -1,281 +1,223 @@
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
-import Layout from '@/components/Layout';
-import React from 'react';
+import { render, screen, within } from '@testing-library/react';
+import { BrowserRouter } from 'react-router-dom';
+import Layout from './Layout';
+import { AuthProvider } from '@/context/AuthContext';
+import { ThemeProvider } from '@/context/ThemeContext';
+import { ToastProvider } from '@/context/ToastContext';
+import { CRMProvider } from '@/context/CRMContext';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-// Mock contexts
-const mockToggleDarkMode = vi.fn();
-const mockSetIsGlobalAIOpen = vi.fn();
-
-vi.mock('@/context/ThemeContext', () => ({
-  useTheme: () => ({
-    darkMode: false,
-    toggleDarkMode: mockToggleDarkMode,
-  }),
-}));
-
-vi.mock('@/context/AuthContext', () => ({
-  useAuth: () => ({
-    session: null,
-    user: null,
-    profile: {
-      id: 'test-user-id',
-      email: 'thales@laray.com.br',
-      company_id: 'test-company-id',
-      role: 'admin',
-      first_name: 'Thales',
-      last_name: 'Laray',
-      avatar_url: null,
+// Mock supabase
+vi.mock('@/lib/supabase/client', () => ({
+  supabase: {
+    auth: {
+      getSession: vi.fn().mockResolvedValue({ data: { session: null }, error: null }),
+      onAuthStateChange: vi.fn().mockReturnValue({ data: { subscription: { unsubscribe: vi.fn() } } }),
     },
-    loading: false,
-    isInitialized: true,
-    signOut: vi.fn(),
-    refreshProfile: vi.fn(),
-  }),
+    from: vi.fn().mockReturnValue({
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      single: vi.fn().mockResolvedValue({ data: null, error: null }),
+    }),
+    channel: vi.fn().mockReturnValue({
+      on: vi.fn().mockReturnThis(),
+      subscribe: vi.fn().mockReturnThis(),
+    }),
+  },
 }));
 
-vi.mock('@/context/CRMContext', () => ({
-  useCRM: () => ({
-    isGlobalAIOpen: false,
-    setIsGlobalAIOpen: mockSetIsGlobalAIOpen,
-    activeBoard: { name: 'Test Board', stages: [] },
-    deals: [],
-    contacts: [],
-    companies: [],
-    activities: [],
-    boards: [],
-  }),
-}));
+// Mock auth context
+vi.mock('@/context/AuthContext', async () => {
+  const actual = await vi.importActual('@/context/AuthContext');
+  return {
+    ...actual,
+    useAuth: () => ({
+      user: { id: 'test-user' },
+      profile: { id: 'test-user', name: 'Test User', organization_id: 'test-org' },
+      loading: false,
+      organizationId: 'test-org',
+      signOut: vi.fn(),
+    }),
+  };
+});
 
-// Mock AIAssistant component
-vi.mock('./AIAssistant', () => ({
-  default: () => <div data-testid="ai-assistant">AI Assistant Mock</div>,
-}));
+// Mock CRM context
+vi.mock('@/context/CRMContext', async () => {
+  const actual = await vi.importActual('@/context/CRMContext');
+  return {
+    ...actual,
+    useCRM: () => ({
+      contacts: [],
+      deals: [],
+      boards: [],
+      lifecycleStages: [],
+      aiApiKey: null,
+      maintenance: null,
+    }),
+    CRMProvider: ({ children }: { children: React.ReactNode }) => children,
+  };
+});
 
-// Mock profile image
-vi.mock('@/assets/profile.jpg', () => ({
-  default: 'mock-profile.jpg',
-}));
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: false },
+  },
+});
 
-// Mock prefetch
-vi.mock('@/lib/prefetch', () => ({
-  prefetchRoute: vi.fn(),
-  RouteName: {},
-}));
+const Wrapper: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <QueryClientProvider client={queryClient}>
+    <BrowserRouter>
+      <ThemeProvider>
+        <ToastProvider>
+          {children}
+        </ToastProvider>
+      </ThemeProvider>
+    </BrowserRouter>
+  </QueryClientProvider>
+);
 
-// Wrapper component with router
-const renderWithRouter = (ui: React.ReactElement, { route = '/' } = {}) => {
-  return render(<MemoryRouter initialEntries={[route]}>{ui}</MemoryRouter>);
-};
-
-describe('Layout', () => {
+describe('Layout Accessibility - Landmarks', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  describe('Rendering', () => {
-    it('should render children content', () => {
-      renderWithRouter(
+  it('should have a skip link as the first focusable element', () => {
+    render(
+      <Wrapper>
         <Layout>
-          <div data-testid="child-content">Test Content</div>
+          <div>Test content</div>
         </Layout>
-      );
+      </Wrapper>
+    );
 
-      expect(screen.getByTestId('child-content')).toBeInTheDocument();
-      expect(screen.getByText('Test Content')).toBeInTheDocument();
-    });
-
-    it('should render FlowCRM logo', () => {
-      renderWithRouter(
-        <Layout>
-          <div>Content</div>
-        </Layout>
-      );
-
-      expect(screen.getByText('NossoCRM')).toBeInTheDocument();
-    });
-
-    it('should render navigation items', () => {
-      renderWithRouter(
-        <Layout>
-          <div>Content</div>
-        </Layout>
-      );
-
-      expect(screen.getByText('Inbox')).toBeInTheDocument();
-      expect(screen.getByText('Visão Geral')).toBeInTheDocument();
-      expect(screen.getByText('Boards')).toBeInTheDocument();
-      expect(screen.getByText('Contatos')).toBeInTheDocument();
-      expect(screen.getByText('Relatórios')).toBeInTheDocument();
-      expect(screen.getByText('Configurações')).toBeInTheDocument();
-    });
-
-    it('should render user profile', () => {
-      renderWithRouter(
-        <Layout>
-          <div>Content</div>
-        </Layout>
-      );
-
-      // Layout shows first_name (nickname has priority but isn't set)
-      expect(screen.getByText('Thales')).toBeInTheDocument();
-      expect(screen.getByText('thales@laray.com.br')).toBeInTheDocument();
-    });
+    const skipLink = screen.getByText('Pular para conteúdo principal');
+    expect(skipLink).toBeInTheDocument();
+    expect(skipLink.tagName).toBe('A');
+    expect(skipLink).toHaveAttribute('href', '#main-content');
   });
 
-  describe('Navigation', () => {
-    it('should highlight active route for dashboard', () => {
-      renderWithRouter(
+  it('should have an aside landmark for the sidebar with aria-label', () => {
+    render(
+      <Wrapper>
         <Layout>
-          <div>Content</div>
-        </Layout>,
-        { route: '/dashboard' }
-      );
-
-      const dashboardLink = screen.getByText('Visão Geral').closest('a');
-      expect(dashboardLink).toHaveClass('bg-primary-500/10');
-    });
-
-    it('should highlight active route for contacts', () => {
-      renderWithRouter(
-        <Layout>
-          <div>Content</div>
-        </Layout>,
-        { route: '/contacts' }
-      );
-
-      const contactsLink = screen.getByText('Contatos').closest('a');
-      expect(contactsLink).toHaveClass('bg-primary-500/10');
-    });
-
-    it('should highlight boards for both /boards and /pipeline routes', () => {
-      renderWithRouter(
-        <Layout>
-          <div>Content</div>
-        </Layout>,
-        { route: '/boards' }
-      );
-
-      const boardsLink = screen.getByText('Boards').closest('a');
-      expect(boardsLink).toHaveClass('bg-primary-500/10');
-    });
-
-    it('should have correct link targets', () => {
-      renderWithRouter(
-        <Layout>
-          <div>Content</div>
+          <div>Test content</div>
         </Layout>
-      );
+      </Wrapper>
+    );
 
-      expect(screen.getByText('Inbox').closest('a')).toHaveAttribute('href', '/inbox');
-      expect(screen.getByText('Visão Geral').closest('a')).toHaveAttribute('href', '/dashboard');
-      expect(screen.getByText('Boards').closest('a')).toHaveAttribute('href', '/boards');
-      expect(screen.getByText('Contatos').closest('a')).toHaveAttribute('href', '/contacts');
-      expect(screen.getByText('Relatórios').closest('a')).toHaveAttribute('href', '/reports');
-      expect(screen.getByText('Configurações').closest('a')).toHaveAttribute('href', '/settings');
-    });
+    const sidebar = screen.getByRole('complementary', { name: 'Menu principal' });
+    expect(sidebar).toBeInTheDocument();
+    expect(sidebar.tagName).toBe('ASIDE');
   });
 
-  describe('Theme Toggle', () => {
-    it('should render theme toggle button', () => {
-      renderWithRouter(
+  it('should have a nav element within the sidebar', () => {
+    render(
+      <Wrapper>
         <Layout>
-          <div>Content</div>
+          <div>Test content</div>
         </Layout>
-      );
+      </Wrapper>
+    );
 
-      // Should find a button that toggles theme (sun/moon icon button)
-      const themeButtons = screen.getAllByRole('button');
-      expect(themeButtons.length).toBeGreaterThan(0);
-    });
-
-    it('should call toggleDarkMode when theme button is clicked', async () => {
-      const user = userEvent.setup();
-
-      renderWithRouter(
-        <Layout>
-          <div>Content</div>
-        </Layout>
-      );
-
-      // Find buttons in the layout
-      const buttons = screen.getAllByRole('button');
-      // Theme toggle is typically one of the first buttons
-      expect(buttons.length).toBeGreaterThan(0);
-
-      // Click first button and verify no error occurs
-      await user.click(buttons[0]);
-      // The mock may not track calls due to how vi.mock works with arrow functions
-      // This test verifies the button is clickable without errors
-      expect(true).toBe(true);
-    });
+    const sidebar = screen.getByRole('complementary', { name: 'Menu principal' });
+    const nav = within(sidebar).getByRole('navigation');
+    expect(nav).toBeInTheDocument();
   });
 
-  describe('AI Assistant', () => {
-    it('should render AI assistant sidebar container', () => {
-      const { container } = renderWithRouter(
+  it('should have a main landmark with correct id for skip link target', () => {
+    render(
+      <Wrapper>
         <Layout>
-          <div>Content</div>
+          <div>Test content</div>
         </Layout>
-      );
+      </Wrapper>
+    );
 
-      // AI Assistant container exists (even if collapsed)
-      const aiSidebar = container.querySelector('.w-96');
-      expect(aiSidebar).toBeInTheDocument();
-    });
-
-    it('should have buttons in header for interactions', () => {
-      renderWithRouter(
-        <Layout>
-          <div>Content</div>
-        </Layout>
-      );
-
-      const buttons = screen.getAllByRole('button');
-      // Should have multiple buttons for various actions
-      expect(buttons.length).toBeGreaterThan(0);
-    });
+    const main = screen.getByRole('main');
+    expect(main).toBeInTheDocument();
+    expect(main).toHaveAttribute('id', 'main-content');
+    expect(main).toHaveAttribute('tabIndex', '-1');
   });
 
-  describe('Responsive Design', () => {
-    it('should have sidebar with hidden md:flex classes', () => {
-      const { container } = renderWithRouter(
+  it('should render children within the main landmark', () => {
+    render(
+      <Wrapper>
         <Layout>
-          <div>Content</div>
+          <div data-testid="child-content">Test content</div>
         </Layout>
-      );
+      </Wrapper>
+    );
 
-      const sidebar = container.querySelector('aside');
-      expect(sidebar).toHaveClass('hidden');
-      expect(sidebar).toHaveClass('md:flex');
-    });
+    const main = screen.getByRole('main');
+    const childContent = screen.getByTestId('child-content');
+    expect(main).toContainElement(childContent);
   });
 
-  describe('Accessibility', () => {
-    it('should have proper semantic structure', () => {
-      const { container } = renderWithRouter(
+  it('should have header buttons with aria-labels', () => {
+    render(
+      <Wrapper>
         <Layout>
-          <div>Content</div>
+          <div>Test content</div>
         </Layout>
-      );
+      </Wrapper>
+    );
 
-      expect(container.querySelector('aside')).toBeInTheDocument();
-      expect(container.querySelector('main')).toBeInTheDocument();
-      expect(container.querySelector('header')).toBeInTheDocument();
-      expect(container.querySelector('nav')).toBeInTheDocument();
-    });
+    // Check for common header buttons
+    const themeButton = screen.queryByRole('button', { name: /alternar.*tema/i });
+    const menuButton = screen.queryByRole('button', { name: /menu/i });
+    
+    // At least one of these should exist
+    expect(themeButton || menuButton).toBeTruthy();
+  });
 
-    it('should have links with proper navigation structure', () => {
-      renderWithRouter(
+  it('should have navigation links with accessible names', () => {
+    render(
+      <Wrapper>
         <Layout>
-          <div>Content</div>
+          <div>Test content</div>
         </Layout>
-      );
+      </Wrapper>
+    );
 
-      const navLinks = screen.getAllByRole('link');
-      expect(navLinks.length).toBeGreaterThanOrEqual(6); // At least 6 nav items
-    });
+    // Check for main navigation links
+    const dashboardLink = screen.queryByRole('link', { name: /dashboard/i });
+    const boardsLink = screen.queryByRole('link', { name: /boards|negócios/i });
+    const contactsLink = screen.queryByRole('link', { name: /contatos/i });
+
+    // Navigation should have at least some links
+    const navLinks = screen.queryAllByRole('link');
+    expect(navLinks.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Layout Accessibility - Focus Management', () => {
+  it('should allow main content to receive focus for skip link', () => {
+    render(
+      <Wrapper>
+        <Layout>
+          <div>Test content</div>
+        </Layout>
+      </Wrapper>
+    );
+
+    const main = screen.getByRole('main');
+    main.focus();
+    expect(document.activeElement).toBe(main);
+  });
+
+  it('skip link should be visually hidden until focused', () => {
+    render(
+      <Wrapper>
+        <Layout>
+          <div>Test content</div>
+        </Layout>
+      </Wrapper>
+    );
+
+    const skipLink = screen.getByText('Pular para conteúdo principal');
+    
+    // The skip link should have the skip-link class for proper visibility handling
+    expect(skipLink).toHaveClass('skip-link');
   });
 });

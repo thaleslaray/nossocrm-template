@@ -1,0 +1,1354 @@
+-- =============================================================================
+-- SEED REALISTA v3 - NossoCRM (Auditoria Completa)
+-- =============================================================================
+-- Execute este script APÓS o setup inicial (empresa + admin criados)
+--
+-- CORREÇÕES v3 (Audit Fixes):
+-- ✓ Contatos linkados a crm_companies via client_company_id
+-- ✓ Deals com tags populadas (VIP, Enterprise, Urgente)
+-- ✓ Atividades contact-only (sem deal_id) para "Risco de Churn"
+-- ✓ Flags is_won/is_lost explícitos nos deals fechados
+-- ✓ system_notifications com exemplos
+-- ✓ custom_field_definitions + deal.custom_fields populados
+-- =============================================================================
+
+DO $$
+DECLARE
+    v_organization_id UUID;
+    v_owner_id UUID;
+    -- Boards
+    v_board_prevendas UUID;
+    v_board_vendas UUID;
+    v_board_onboarding UUID;
+    -- Stages (Pré-vendas)
+    v_stage_novos_leads UUID;
+    v_stage_contatado UUID;
+    v_stage_qualificando UUID;
+    v_stage_mql UUID;
+    -- Stages (Pipeline de Vendas)
+    v_stage_descoberta UUID;
+    v_stage_proposta UUID;
+    v_stage_negociacao UUID;
+    v_stage_ganho UUID;
+    v_stage_perdido UUID;
+    -- Stages (Onboarding)
+    v_stage_kickoff UUID;
+    v_stage_implementacao UUID;
+    v_stage_treinamento UUID;
+    v_stage_golive UUID;
+    -- CRM Companies array
+    v_company_ids UUID[];
+    v_company_id UUID;
+    -- Tags
+    v_tag_vip UUID;
+    v_tag_enterprise UUID;
+    v_tag_urgente UUID;
+    v_tag_upsell UUID;
+    v_tag_indicacao UUID;
+    -- Custom Field
+    v_cf_origem UUID;
+    v_cf_setor UUID;
+    -- Contadores
+    v_contact_count INTEGER := 0;
+    v_deal_count INTEGER := 0;
+    -- Arrays para dados
+    v_first_names TEXT[] := ARRAY['Maria', 'João', 'Ana', 'Pedro', 'Carla', 'Lucas', 'Fernanda', 'Rafael', 'Julia', 'Bruno', 'Beatriz', 'Thiago', 'Larissa', 'Gustavo', 'Amanda', 'Felipe', 'Camila', 'Ricardo', 'Patricia', 'André', 'Isabela', 'Gabriel', 'Mariana', 'Diego', 'Leticia'];
+    v_last_names TEXT[] := ARRAY['Silva', 'Santos', 'Oliveira', 'Souza', 'Lima', 'Pereira', 'Costa', 'Ferreira', 'Almeida', 'Carvalho', 'Rodrigues', 'Martins', 'Araújo', 'Gomes', 'Ribeiro', 'Barbosa', 'Nascimento', 'Moreira', 'Monteiro', 'Cardoso', 'Vieira', 'Nunes', 'Machado', 'Mendes', 'Freitas'];
+    v_domains TEXT[] := ARRAY['gmail.com', 'outlook.com', 'empresa.com.br', 'hotmail.com', 'yahoo.com.br', 'icloud.com', 'corporativo.com.br'];
+    v_roles TEXT[] := ARRAY['CEO', 'Diretor', 'Gerente', 'Coordenador', 'Analista', 'Consultor', 'Supervisor', 'Especialista', 'Assistente', 'Estagiário'];
+    v_statuses TEXT[] := ARRAY['ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'ACTIVE', 'INACTIVE', 'CHURNED'];
+    v_stages TEXT[] := ARRAY['LEAD', 'LEAD', 'LEAD', 'MQL', 'MQL', 'PROSPECT', 'PROSPECT', 'CUSTOMER', 'CUSTOMER', 'OTHER'];
+    v_sources TEXT[] := ARRAY['Site', 'LinkedIn', 'Indicação', 'Evento', 'Ads', 'Cold Call', 'Parceiro', 'Inbound'];
+    -- Variáveis auxiliares
+    v_name TEXT;
+    v_email TEXT;
+    v_phone TEXT;
+    v_role TEXT;
+    v_stage TEXT;
+    v_status TEXT;
+    v_source TEXT;
+    v_days_ago INTEGER;
+    v_created_at TIMESTAMPTZ;
+    v_updated_at TIMESTAMPTZ;
+    v_last_purchase_days INTEGER;
+    v_contact_id UUID;
+    v_deal_id UUID;
+    v_deal_created TIMESTAMPTZ;
+    v_deal_closed TIMESTAMPTZ;
+    v_deal_value NUMERIC;
+    v_birth_date DATE;
+    v_current_month INTEGER;
+    v_loss_reason TEXT;
+    v_random_val FLOAT;
+    v_deal_tags TEXT[];
+    i INTEGER;
+BEGIN
+    -- Busca ou cria a empresa e usuário admin
+    SELECT id INTO v_organization_id FROM organizations LIMIT 1;
+    
+    -- Se não existir organização, criar
+    IF v_organization_id IS NULL THEN
+        RAISE NOTICE '🏢 Nenhuma organização encontrada. Criando organização padrão...';
+        
+        -- Criar usuário de autenticação no Supabase Auth
+        INSERT INTO auth.users (
+            instance_id,
+            id,
+            aud,
+            role,
+            email,
+            encrypted_password,
+            email_confirmed_at,
+            created_at,
+            updated_at,
+            raw_app_meta_data,
+            raw_user_meta_data,
+            is_super_admin,
+            confirmation_token,
+            email_change,
+            email_change_token_new,
+            recovery_token
+        ) VALUES (
+            '00000000-0000-0000-0000-000000000000',
+            gen_random_uuid(),
+            'authenticated',
+            'authenticated',
+            'admin@crmia.com',
+            extensions.crypt('admin123', extensions.gen_salt('bf')), -- Senha: admin123
+            NOW(),
+            NOW(),
+            NOW(),
+            '{"provider":"email","providers":["email"]}'::jsonb,
+            '{"name":"Admin"}'::jsonb,
+            FALSE,
+            '',
+            '',
+            '',
+            ''
+        ) RETURNING id INTO v_owner_id;
+        
+        RAISE NOTICE '   ✓ Usuário auth criado: admin@crmia.com (senha: admin123)';
+        
+        -- Criar organização
+        INSERT INTO organizations (name, created_at, updated_at)
+        VALUES ('Minha Empresa', NOW(), NOW())
+        RETURNING id INTO v_organization_id;
+        
+        RAISE NOTICE '   ✓ Organização criada: Minha Empresa';
+        
+        -- Criar profile do admin
+        INSERT INTO profiles (id, email, name, organization_id, role, created_at, updated_at)
+        VALUES (
+            v_owner_id,
+            'admin@crmia.com',
+            'Admin',
+            v_organization_id,
+            'admin',
+            NOW(),
+            NOW()
+        )
+        ON CONFLICT (id) DO UPDATE SET
+            organization_id = EXCLUDED.organization_id,
+            role = EXCLUDED.role,
+            name = EXCLUDED.name;
+        
+        RAISE NOTICE '   ✓ Profile admin criado';
+        
+    ELSE
+        -- Organização existe, buscar owner
+        SELECT id INTO v_owner_id FROM profiles 
+        WHERE organization_id = v_organization_id AND role = 'admin' 
+        LIMIT 1;
+        
+        IF v_owner_id IS NULL THEN
+            RAISE EXCEPTION 'Organização existe mas não há admin. Execute reset.sql e tente novamente.';
+        END IF;
+        
+        RAISE NOTICE '📊 Usando organização existente';
+    END IF;
+    
+    v_current_month := EXTRACT(MONTH FROM NOW())::INTEGER;
+
+    RAISE NOTICE '';
+    RAISE NOTICE '🚀 Iniciando seed REALISTA v3 (Audit Fixes)...';
+    RAISE NOTICE '   Organization: %', v_organization_id;
+    RAISE NOTICE '   Owner: %', v_owner_id;
+
+    -- ==========================================================================
+    -- 1. CRIAR JORNADA "MÁQUINA DE VENDAS B2B"
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '🏭 Criando Jornada: Máquina de Vendas B2B...';
+
+    -- Board 1: Pré-vendas (SDR)
+    INSERT INTO boards (name, description, organization_id, owner_id, is_default, type, template, linked_lifecycle_stage, position, agent_name, agent_role, agent_behavior, goal_description, goal_kpi, goal_target_value, goal_type, entry_trigger)
+    VALUES (
+        '1. Pré-vendas (SDR)',
+        'Qualificação de leads até tornarem-se MQL',
+        v_organization_id, v_owner_id, true, 'SALES', 'PRE_SALES', 'LEAD', 0,
+        'SDR Bot', 'Pré-vendas e Qualificação',
+        'Seja rápido e objetivo. Seu foco é qualificar o lead fazendo perguntas chave sobre orçamento, autoridade, necessidade e tempo (BANT).',
+        'Qualificar leads frios e identificar oportunidades reais.', 'Leads Qualificados (MQL)', '50', 'number',
+        'Novos leads capturados via formulário do site ou LinkedIn.'
+    ) RETURNING id INTO v_board_prevendas;
+    
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage)
+    VALUES ('Novos Leads', 'bg-blue-500', 0, v_board_prevendas, v_organization_id, 'LEAD')
+    RETURNING id INTO v_stage_novos_leads;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage)
+    VALUES ('Contatado', 'bg-yellow-500', 1, v_board_prevendas, v_organization_id, 'LEAD')
+    RETURNING id INTO v_stage_contatado;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage)
+    VALUES ('Qualificando', 'bg-purple-500', 2, v_board_prevendas, v_organization_id, 'LEAD')
+    RETURNING id INTO v_stage_qualificando;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage)
+    VALUES ('Qualificado (MQL)', 'bg-green-500', 3, v_board_prevendas, v_organization_id, 'MQL')
+    RETURNING id INTO v_stage_mql;
+    
+    RAISE NOTICE '   ✓ Board "1. Pré-vendas (SDR)" criado';
+
+    -- Board 2: Pipeline de Vendas
+    INSERT INTO boards (name, description, organization_id, owner_id, is_default, type, template, linked_lifecycle_stage, position, agent_name, agent_role, agent_behavior, goal_description, goal_kpi, goal_target_value, goal_type, entry_trigger)
+    VALUES (
+        '2. Pipeline de Vendas',
+        'MQL até fechamento ou perda',
+        v_organization_id, v_owner_id, false, 'SALES', 'SALES', 'MQL', 1,
+        'Closer Bot', 'Executivo de Vendas',
+        'Atue como um consultor experiente. Foque em entender a dor do cliente e negociar termos.',
+        'Maximizar a receita recorrente mensal (MRR).', 'Receita Nova (MRR)', '50000', 'currency',
+        'Leads qualificados (MQL) vindos da Pré-venda.'
+    ) RETURNING id INTO v_board_vendas;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage) 
+    VALUES ('Descoberta', 'bg-blue-500', 0, v_board_vendas, v_organization_id, 'MQL')
+    RETURNING id INTO v_stage_descoberta;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage) 
+    VALUES ('Proposta', 'bg-purple-500', 1, v_board_vendas, v_organization_id, 'PROSPECT')
+    RETURNING id INTO v_stage_proposta;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage) 
+    VALUES ('Negociação', 'bg-orange-500', 2, v_board_vendas, v_organization_id, 'PROSPECT')
+    RETURNING id INTO v_stage_negociacao;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage) 
+    VALUES ('Ganho', 'bg-green-500', 3, v_board_vendas, v_organization_id, 'CUSTOMER')
+    RETURNING id INTO v_stage_ganho;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage) 
+    VALUES ('Perdido', 'bg-red-500', 4, v_board_vendas, v_organization_id, 'OTHER')
+    RETURNING id INTO v_stage_perdido;
+    
+    RAISE NOTICE '   ✓ Board "2. Pipeline de Vendas" criado';
+
+    -- Board 3: Onboarding
+    INSERT INTO boards (name, description, organization_id, owner_id, is_default, type, template, linked_lifecycle_stage, position, agent_name, agent_role, agent_behavior, goal_description, goal_kpi, goal_target_value, goal_type, entry_trigger)
+    VALUES (
+        '3. Onboarding',
+        'Ativação e implementação de novos clientes',
+        v_organization_id, v_owner_id, false, 'SALES', 'ONBOARDING', 'CUSTOMER', 2,
+        'CS Manager', 'Gerente de Sucesso do Cliente',
+        'Seja acolhedor e didático. Guie o cliente passo a passo.',
+        'Garantir que o cliente complete a configuração em até 7 dias.', 'Clientes Ativados', '20', 'number',
+        'Novos clientes com contrato assinado.'
+    ) RETURNING id INTO v_board_onboarding;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage)
+    VALUES ('Kickoff', 'bg-blue-500', 0, v_board_onboarding, v_organization_id, 'CUSTOMER')
+    RETURNING id INTO v_stage_kickoff;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage)
+    VALUES ('Implementação', 'bg-purple-500', 1, v_board_onboarding, v_organization_id, 'CUSTOMER')
+    RETURNING id INTO v_stage_implementacao;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage)
+    VALUES ('Treinamento', 'bg-yellow-500', 2, v_board_onboarding, v_organization_id, 'CUSTOMER')
+    RETURNING id INTO v_stage_treinamento;
+    
+    INSERT INTO board_stages (name, color, "order", board_id, organization_id, linked_lifecycle_stage)
+    VALUES ('Go Live', 'bg-green-500', 3, v_board_onboarding, v_organization_id, 'CUSTOMER')
+    RETURNING id INTO v_stage_golive;
+    
+    RAISE NOTICE '   ✓ Board "3. Onboarding" criado';
+
+    -- ==========================================================================
+    -- 2. CRIAR 15 EMPRESAS CRM (salvar IDs para vincular contatos)
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '🏢 Criando empresas CRM...';
+    
+    WITH inserted AS (
+        INSERT INTO crm_companies (name, industry, website, organization_id, owner_id) VALUES
+        ('TechSoft Solutions', 'Tecnologia', 'https://techsoft.com.br', v_organization_id, v_owner_id),
+        ('Indústria ABC Ltda', 'Manufatura', 'https://industriaabc.com.br', v_organization_id, v_owner_id),
+        ('Grupo XYZ Holdings', 'Holding', 'https://grupoxyz.com.br', v_organization_id, v_owner_id),
+        ('Consultoria Beta', 'Consultoria', 'https://consultoriabeta.com.br', v_organization_id, v_owner_id),
+        ('Loja Alpha Varejo', 'Varejo', 'https://lojaalpha.com.br', v_organization_id, v_owner_id),
+        ('Serviços Delta Corp', 'Serviços', 'https://servicosdelta.com.br', v_organization_id, v_owner_id),
+        ('Rede Gamma Logística', 'Logística', 'https://redegamma.com.br', v_organization_id, v_owner_id),
+        ('Holdings Omega SA', 'Financeiro', 'https://holdingsomega.com.br', v_organization_id, v_owner_id),
+        ('Startup Iota Tech', 'Tecnologia', 'https://startupiota.io', v_organization_id, v_owner_id),
+        ('Corp Sigma Brasil', 'Corporativo', 'https://corpsigma.com.br', v_organization_id, v_owner_id),
+        ('Farmácia Saúde+', 'Saúde', 'https://farmaciasaudemais.com.br', v_organization_id, v_owner_id),
+        ('Construtora Horizonte', 'Construção', 'https://construtorahorizonte.com.br', v_organization_id, v_owner_id),
+        ('Agro Prime Rural', 'Agronegócio', 'https://agroprime.com.br', v_organization_id, v_owner_id),
+        ('Escola Futuro Brilhante', 'Educação', 'https://escolafuturobrilhante.edu.br', v_organization_id, v_owner_id),
+        ('Restaurante Sabor & Arte', 'Alimentação', 'https://saborearte.com.br', v_organization_id, v_owner_id)
+        RETURNING id
+    )
+    SELECT array_agg(id) INTO v_company_ids FROM inserted;
+    
+    RAISE NOTICE '   ✓ 15 empresas CRM criadas';
+
+    -- ==========================================================================
+    -- 3. CRIAR 10 PRODUTOS
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '📦 Criando catálogo de produtos...';
+    
+    INSERT INTO products (name, description, price, sku, organization_id) VALUES
+    ('Licença Básica (Mensal)', 'Plano básico com até 3 usuários', 99.00, 'LIC-BAS-M', v_organization_id),
+    ('Licença Pro (Mensal)', 'Plano profissional com até 10 usuários', 299.00, 'LIC-PRO-M', v_organization_id),
+    ('Licença Enterprise (Mensal)', 'Plano enterprise ilimitado', 999.00, 'LIC-ENT-M', v_organization_id),
+    ('Licença Básica (Anual)', 'Plano básico anual - 2 meses grátis', 990.00, 'LIC-BAS-A', v_organization_id),
+    ('Licença Pro (Anual)', 'Plano profissional anual - 2 meses grátis', 2990.00, 'LIC-PRO-A', v_organization_id),
+    ('Licença Enterprise (Anual)', 'Plano enterprise anual - 2 meses grátis', 9990.00, 'LIC-ENT-A', v_organization_id),
+    ('Consultoria de Implantação', '40 horas de consultoria especializada', 8000.00, 'CONS-IMP', v_organization_id),
+    ('Treinamento Equipe', 'Treinamento presencial para até 20 pessoas', 5000.00, 'TREIN-EQ', v_organization_id),
+    ('Suporte Premium', 'Suporte 24/7 com SLA de 1 hora', 500.00, 'SUP-PREM', v_organization_id),
+    ('Integração API', 'Desenvolvimento de integração customizada', 15000.00, 'INT-API', v_organization_id);
+    
+    RAISE NOTICE '   ✓ 10 produtos criados';
+
+    -- ==========================================================================
+    -- 4. CRIAR TAGS (salvar IDs para uso em deals)
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '🏷️ Criando tags...';
+    
+    INSERT INTO tags (name, color, organization_id) VALUES ('VIP', 'bg-yellow-500', v_organization_id) RETURNING id INTO v_tag_vip;
+    INSERT INTO tags (name, color, organization_id) VALUES ('Enterprise', 'bg-indigo-500', v_organization_id) RETURNING id INTO v_tag_enterprise;
+    INSERT INTO tags (name, color, organization_id) VALUES ('Urgente', 'bg-red-500', v_organization_id) RETURNING id INTO v_tag_urgente;
+    INSERT INTO tags (name, color, organization_id) VALUES ('Upsell', 'bg-purple-500', v_organization_id) RETURNING id INTO v_tag_upsell;
+    INSERT INTO tags (name, color, organization_id) VALUES ('Indicação', 'bg-green-500', v_organization_id) RETURNING id INTO v_tag_indicacao;
+    
+    INSERT INTO tags (name, color, organization_id) VALUES
+    ('Recompra', 'bg-blue-500', v_organization_id),
+    ('PME', 'bg-cyan-500', v_organization_id),
+    ('Startup', 'bg-pink-500', v_organization_id),
+    ('Governo', 'bg-slate-500', v_organization_id),
+    ('Educação', 'bg-orange-500', v_organization_id),
+    ('Saúde', 'bg-teal-500', v_organization_id),
+    ('Varejo', 'bg-amber-500', v_organization_id);
+    
+    RAISE NOTICE '   ✓ 12 tags criadas';
+
+    -- ==========================================================================
+    -- 5. CRIAR CUSTOM FIELD DEFINITIONS
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '📋 Criando campos personalizados...';
+    
+    INSERT INTO custom_field_definitions (key, label, type, options, entity_type, organization_id)
+    VALUES ('origem_campanha', 'Origem da Campanha', 'select', 
+            ARRAY['Google Ads', 'Meta Ads', 'LinkedIn', 'Orgânico', 'Evento', 'Indicação'], 
+            'deal', v_organization_id)
+    RETURNING id INTO v_cf_origem;
+    
+    INSERT INTO custom_field_definitions (key, label, type, options, entity_type, organization_id)
+    VALUES ('setor_industria', 'Setor da Indústria', 'select', 
+            ARRAY['Tecnologia', 'Varejo', 'Serviços', 'Indústria', 'Saúde', 'Educação'], 
+            'deal', v_organization_id)
+    RETURNING id INTO v_cf_setor;
+    
+    INSERT INTO custom_field_definitions (key, label, type, entity_type, organization_id)
+    VALUES ('data_primeiro_contato', 'Data Primeiro Contato', 'date', 'deal', v_organization_id);
+    
+    RAISE NOTICE '   ✓ 3 campos personalizados criados';
+
+    -- ==========================================================================
+    -- 6. CRIAR 100 CONTATOS VINCULADOS A EMPRESAS
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '👥 Criando 100 contatos vinculados a empresas...';
+    
+    FOR i IN 1..100 LOOP
+        v_name := v_first_names[1 + floor(random() * 25)::int] || ' ' || v_last_names[1 + floor(random() * 25)::int];
+        v_email := lower(replace(v_name, ' ', '.')) || i || '@' || v_domains[1 + floor(random() * 7)::int];
+        v_phone := '(' || (10 + floor(random() * 89)::int) || ') 9' || (10000000 + floor(random() * 89999999)::int);
+        v_role := v_roles[1 + floor(random() * 10)::int];
+        v_stage := v_stages[1 + floor(random() * 10)::int];
+        v_status := v_statuses[1 + floor(random() * 10)::int];
+        v_source := v_sources[1 + floor(random() * 8)::int];
+        
+        -- FIX: Vincular 70% dos contatos a uma empresa CRM
+        IF random() < 0.70 THEN
+            v_company_id := v_company_ids[1 + floor(random() * 15)::int];
+        ELSE
+            v_company_id := NULL;
+        END IF;
+        
+        -- Distribuir datas ao longo de 12 meses
+        IF i <= 5 THEN
+            v_days_ago := 335 + floor(random() * 30)::int;
+        ELSIF i <= 50 THEN
+            v_days_ago := 30 + floor(random() * 305)::int;
+        ELSIF i <= 85 THEN
+            v_days_ago := 7 + floor(random() * 23)::int;
+        ELSE
+            v_days_ago := floor(random() * 7)::int;
+        END IF;
+        
+        v_created_at := NOW() - (v_days_ago || ' days')::interval;
+        
+        -- 15% dos contatos têm aniversário (10% no mês atual)
+        v_birth_date := NULL;
+        IF random() < 0.15 THEN
+            IF random() < 0.10 THEN
+                v_birth_date := make_date(1970 + floor(random() * 35)::int, v_current_month, 1 + floor(random() * 28)::int);
+            ELSE
+                v_birth_date := make_date(1970 + floor(random() * 35)::int, 1 + floor(random() * 12)::int, 1 + floor(random() * 28)::int);
+            END IF;
+        END IF;
+        
+        -- Churn risk para ACTIVE CUSTOMER (FIX v4: mais cenários de RESCUE)
+        v_last_purchase_days := NULL;
+        IF v_status = 'ACTIVE' AND v_stage = 'CUSTOMER' THEN
+            -- 25% com última compra há 30-60 dias (risco médio)
+            IF random() < 0.25 THEN
+                v_last_purchase_days := 30 + floor(random() * 30)::int;
+            -- 15% com última compra há 60-90 dias (risco alto) 
+            ELSIF random() < 0.15 THEN
+                v_last_purchase_days := 60 + floor(random() * 30)::int;
+            -- 60% com compras recentes (saudável)
+            ELSE
+                v_last_purchase_days := floor(random() * 25)::int;
+            END IF;
+        END IF;
+        
+        INSERT INTO contacts (
+            name, email, phone, role, stage, status, source,
+            client_company_id, organization_id, owner_id, created_at, updated_at,
+            last_interaction, last_purchase_date, birth_date
+        )
+        VALUES (
+            v_name, v_email, v_phone, v_role, v_stage, v_status, v_source,
+            v_company_id, v_organization_id, v_owner_id, v_created_at, 
+            v_created_at + (floor(random() * 30) || ' days')::interval,
+            -- FIX v4: last_interaction alinhado com last_purchase para cenários de RESCUE
+            CASE 
+                WHEN v_last_purchase_days IS NOT NULL THEN 
+                    NOW() - ((v_last_purchase_days + floor(random() * 5)::int) || ' days')::interval
+                ELSE 
+                    v_created_at + (floor(random() * GREATEST(v_days_ago / 2, 1)) || ' days')::interval
+            END,
+            CASE WHEN v_last_purchase_days IS NOT NULL 
+                THEN (NOW() - (v_last_purchase_days || ' days')::interval)::date 
+                ELSE NULL 
+            END,
+            v_birth_date
+        );
+        
+        v_contact_count := v_contact_count + 1;
+    END LOOP;
+    
+    RAISE NOTICE '   ✅ % contatos criados (70%% vinculados a empresas)', v_contact_count;
+
+    -- ==========================================================================
+    -- 7. CRIAR DEALS DISTRIBUÍDOS NOS 3 BOARDS (45 total)
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '💼 Criando 45 deals distribuídos pelos 3 boards...';
+    
+    -- ========== BOARD 1: PRÉ-VENDAS (15 deals) ==========
+    
+    -- Novos Leads (5)
+    FOR i IN 1..5 LOOP
+        v_days_ago := floor(random() * 7)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_deal_value := exp(7 + random() * 1.5)::numeric;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Lead ' || i || ' - Novo Contato',
+            round(v_deal_value, 2),
+            10,
+            v_board_prevendas,
+            v_stage_novos_leads,
+            v_organization_id,
+            v_owner_id,
+            'low',
+            'OPEN',
+            v_deal_created,
+            v_deal_created,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            ARRAY[]::text[]
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 5 deals em Novos Leads (Pré-vendas)';
+    
+    -- Contatado (4)
+    FOR i IN 6..9 LOOP
+        v_days_ago := 3 + floor(random() * 10)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_updated_at := v_deal_created + ((1 + floor(random() * 3)) || ' days')::interval;
+        v_deal_value := exp(7.2 + random() * 1.5)::numeric;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Lead ' || (i-5) || ' - Primeiro Contato Feito',
+            round(v_deal_value, 2),
+            20,
+            v_board_prevendas,
+            v_stage_contatado,
+            v_organization_id,
+            v_owner_id,
+            'low',
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            ARRAY[]::text[]
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 4 deals em Contatado (Pré-vendas)';
+    
+    -- Qualificando (3)
+    FOR i IN 10..12 LOOP
+        v_days_ago := 5 + floor(random() * 14)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_updated_at := NOW() - (floor(random() * 2) || ' days')::interval;
+        v_deal_value := exp(7.5 + random() * 1.8)::numeric;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Lead ' || (i-9) || ' - Em Qualificação BANT',
+            round(v_deal_value, 2),
+            30,
+            v_board_prevendas,
+            v_stage_qualificando,
+            v_organization_id,
+            v_owner_id,
+            'medium',
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            ARRAY[]::text[]
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 3 deals em Qualificando (Pré-vendas)';
+    
+    -- Qualificado MQL (3)
+    FOR i IN 13..15 LOOP
+        v_days_ago := 7 + floor(random() * 14)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_updated_at := NOW() - (floor(random() * 3) || ' days')::interval;
+        v_deal_value := exp(8 + random() * 2)::numeric;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'MQL ' || (i-12) || ' - Pronto para Vendas',
+            round(v_deal_value, 2),
+            40,
+            v_board_prevendas,
+            v_stage_mql,
+            v_organization_id,
+            v_owner_id,
+            'medium',
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            ARRAY['Indicação']
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 3 deals Qualificados MQL (Pré-vendas)';
+    
+    -- ========== BOARD 2: PIPELINE DE VENDAS (22 deals) ==========
+    
+    -- Descoberta (6) - FIX v4: Alguns deals "STALLED" (parados há >7 dias)
+    FOR i IN 16..21 LOOP
+        v_days_ago := 5 + floor(random() * 21)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        
+        -- 40% de chance de ser deal parado (STALLED) - updated_at antigo
+        IF random() < 0.40 THEN
+            -- Deal parado: updated_at = created_at + poucos dias (ficou sem update)
+            v_updated_at := v_deal_created + ((1 + floor(random() * 4)) || ' days')::interval;
+            v_deal_tags := ARRAY['Urgente'];
+        ELSE
+            -- Deal ativo: updated_at recente
+            v_updated_at := NOW() - (floor(random() * 3) || ' days')::interval;
+            v_deal_tags := ARRAY[]::text[];
+        END IF;
+        
+        v_deal_value := exp(8 + random() * 2.2)::numeric;
+        
+        IF v_deal_value > 50000 THEN
+            v_deal_tags := array_cat(v_deal_tags, ARRAY['Enterprise']);
+        END IF;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Oportunidade DESC-' || (i-15),
+            round(v_deal_value, 2),
+            25 + floor(random() * 25)::int,
+            v_board_vendas,
+            v_stage_descoberta,
+            v_organization_id,
+            v_owner_id,
+            CASE WHEN v_deal_value > 50000 THEN 'high' WHEN v_deal_value > 15000 THEN 'medium' ELSE 'low' END,
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            v_deal_tags
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 6 deals em Descoberta (Pipeline)';
+    
+    -- Proposta (4)
+    FOR i IN 22..25 LOOP
+        v_days_ago := 7 + floor(random() * 14)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_updated_at := NOW() - (floor(random() * 2) || ' days')::interval;
+        v_deal_value := exp(8.3 + random() * 2.3)::numeric;
+        
+        IF random() < 0.3 THEN
+            v_deal_tags := ARRAY['Urgente'];
+        ELSE
+            v_deal_tags := ARRAY[]::text[];
+        END IF;
+        
+        IF v_deal_value > 50000 THEN
+            v_deal_tags := array_cat(v_deal_tags, ARRAY['Enterprise']);
+        END IF;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Proposta PROP-' || (i-21),
+            round(v_deal_value, 2),
+            55 + floor(random() * 25)::int,
+            v_board_vendas,
+            v_stage_proposta,
+            v_organization_id,
+            v_owner_id,
+            'medium',
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            v_deal_tags
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 4 deals em Proposta (Pipeline)';
+    
+    -- Negociação (3)
+    FOR i IN 26..28 LOOP
+        v_days_ago := 7 + floor(random() * 10)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_updated_at := NOW() - (floor(random() * 2) || ' days')::interval;
+        v_deal_value := exp(8.7 + random() * 2)::numeric;
+        
+        v_deal_tags := ARRAY['VIP'];
+        IF v_deal_value > 80000 THEN
+            v_deal_tags := array_cat(v_deal_tags, ARRAY['Enterprise']);
+        END IF;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Fechamento NEG-' || (i-25),
+            round(v_deal_value, 2),
+            75 + floor(random() * 20)::int,
+            v_board_vendas,
+            v_stage_negociacao,
+            v_organization_id,
+            v_owner_id,
+            'high',
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            v_deal_tags
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 3 deals em Negociação (Pipeline)';
+    
+    -- Ganho (6) - Estes vão para Onboarding
+    FOR i IN 29..34 LOOP
+        v_days_ago := 30 + floor(random() * 150)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_deal_closed := v_deal_created + ((7 + floor(random() * 30)) || ' days')::interval;
+        v_deal_value := exp(8.5 + random() * 2.2)::numeric;
+        
+        IF v_deal_value > 50000 THEN
+            v_deal_tags := ARRAY['VIP', 'Enterprise'];
+        ELSIF v_deal_value > 20000 THEN
+            v_deal_tags := ARRAY['VIP'];
+        ELSE
+            v_deal_tags := ARRAY['Upsell'];
+        END IF;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status,  
+            created_at, updated_at, closed_at, contact_id, client_company_id,
+            is_won, is_lost, tags, custom_fields
+        ) VALUES (
+            'Cliente WON-' || (i-28),
+            round(v_deal_value, 2),
+            100,
+            v_board_vendas,
+            v_stage_ganho,
+            v_organization_id,
+            v_owner_id,
+            CASE WHEN v_deal_value > 50000 THEN 'high' ELSE 'medium' END,
+            'WON',
+            v_deal_created,
+            v_deal_closed,
+            v_deal_closed,
+            v_contact_id,
+            v_company_id,
+            true,
+            false,
+            v_deal_tags,
+            jsonb_build_object(
+                'origem_campanha', (ARRAY['Google Ads', 'Meta Ads', 'LinkedIn', 'Orgânico'])[1 + floor(random() * 4)::int],
+                'setor_industria', (ARRAY['Tecnologia', 'Varejo', 'Serviços'])[1 + floor(random() * 3)::int]
+            )
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 6 deals Ganhos (Pipeline)';
+    
+    -- Perdido (3)
+    FOR i IN 35..37 LOOP
+        v_days_ago := 14 + floor(random() * 90)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_deal_closed := v_deal_created + ((5 + floor(random() * 20)) || ' days')::interval;
+        v_deal_value := exp(7.8 + random() * 2.3)::numeric;
+        
+        v_random_val := random();
+        IF v_random_val < 0.40 THEN
+            v_loss_reason := 'Preço';
+        ELSIF v_random_val < 0.65 THEN
+            v_loss_reason := 'Concorrência';
+        ELSIF v_random_val < 0.80 THEN
+            v_loss_reason := 'Timing';
+        ELSIF v_random_val < 0.95 THEN
+            v_loss_reason := 'Sem budget';
+        ELSE
+            v_loss_reason := 'Mudança de prioridade';
+        END IF;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, closed_at, contact_id, client_company_id,
+            is_won, is_lost, loss_reason, tags
+        ) VALUES (
+            'Negócio LOST-' || (i-34),
+            round(v_deal_value, 2),
+            0,
+            v_board_vendas,
+            v_stage_perdido,
+            v_organization_id,
+            v_owner_id,
+            'low',
+            'LOST',
+            v_deal_created,
+            v_deal_closed,
+            v_deal_closed,
+            v_contact_id,
+            v_company_id,
+            false,
+            true,
+            v_loss_reason,
+            ARRAY[]::text[]
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 3 deals Perdidos (Pipeline)';
+    
+    -- ========== BOARD 3: ONBOARDING (8 deals) ==========
+    
+    -- Kickoff (3)
+    FOR i IN 38..40 LOOP
+        v_days_ago := 3 + floor(random() * 10)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_updated_at := NOW() - ((1 + floor(random() * 3))::int || ' days')::interval;
+        v_deal_value := exp(8.5 + random() * 2)::numeric;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Onboarding KICK-' || (i-37),
+            round(v_deal_value, 2),
+            100,
+            v_board_onboarding,
+            v_stage_kickoff,
+            v_organization_id,
+            v_owner_id,
+            'high',
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            ARRAY['VIP']
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 3 deals em Kickoff (Onboarding)';
+    
+    -- Implementação (2)
+    FOR i IN 41..42 LOOP
+        v_days_ago := 7 + floor(random() * 14)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_updated_at := NOW() - (floor(random() * 2) || ' days')::interval;
+        v_deal_value := exp(8.3 + random() * 2.1)::numeric;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Implementação IMPL-' || (i-40),
+            round(v_deal_value, 2),
+            100,
+            v_board_onboarding,
+            v_stage_implementacao,
+            v_organization_id,
+            v_owner_id,
+            'medium',
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            ARRAY[]::text[]
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 2 deals em Implementação (Onboarding)';
+    
+    -- Treinamento (2)
+    FOR i IN 43..44 LOOP
+        v_days_ago := 10 + floor(random() * 20)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_updated_at := NOW() - (floor(random() * 3) || ' days')::interval;
+        v_deal_value := exp(8.2 + random() * 2)::numeric;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Treinamento TRAIN-' || (i-42),
+            round(v_deal_value, 2),
+            100,
+            v_board_onboarding,
+            v_stage_treinamento,
+            v_organization_id,
+            v_owner_id,
+            'medium',
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            ARRAY[]::text[]
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 2 deals em Treinamento (Onboarding)';
+    
+    -- Go Live (1)
+    FOR i IN 45..45 LOOP
+        v_days_ago := 15 + floor(random() * 30)::int;
+        v_deal_created := NOW() - (v_days_ago || ' days')::interval;
+        v_updated_at := NOW() - (floor(random() * 5) || ' days')::interval;
+        v_deal_value := exp(8.4 + random() * 2.1)::numeric;
+        
+        SELECT id INTO v_contact_id FROM contacts 
+        WHERE organization_id = v_organization_id 
+        ORDER BY created_at, id 
+        LIMIT 1 OFFSET (i - 1);
+        
+        SELECT client_company_id INTO v_company_id FROM contacts WHERE id = v_contact_id;
+        
+        INSERT INTO deals (
+            title, value, probability, board_id, stage_id, 
+            organization_id, owner_id, priority, status, 
+            created_at, updated_at, contact_id, client_company_id,
+            is_won, is_lost, tags
+        ) VALUES (
+            'Cliente Ativo LIVE-' || (i-44),
+            round(v_deal_value, 2),
+            100,
+            v_board_onboarding,
+            v_stage_golive,
+            v_organization_id,
+            v_owner_id,
+            'low',
+            'OPEN',
+            v_deal_created,
+            v_updated_at,
+            v_contact_id,
+            v_company_id,
+            false,
+            false,
+            ARRAY['Upsell']
+        );
+        v_deal_count := v_deal_count + 1;
+    END LOOP;
+    RAISE NOTICE '   ✓ 1 deal em Go Live (Onboarding)';
+    
+    RAISE NOTICE '';
+    RAISE NOTICE '   ✅ TOTAL: % deals criados', v_deal_count;
+    RAISE NOTICE '   📊 Distribuição: 15 Pré-vendas | 22 Pipeline | 8 Onboarding';
+
+
+    -- ==========================================================================
+    -- 8. RECALCULAR LTV DOS CONTATOS
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '💰 Recalculando LTV dos contatos...';
+    
+    UPDATE contacts c
+    SET total_value = COALESCE((
+        SELECT SUM(d.value) FROM deals d WHERE d.contact_id = c.id AND d.is_won = true
+    ), 0);
+    
+    RAISE NOTICE '   ✓ LTV recalculado';
+
+    -- ==========================================================================
+    -- 9. CRIAR ATIVIDADES (incluindo contact-only)
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '📅 Criando atividades...';
+    
+    -- Atividades passadas COMPLETADAS (15)
+    INSERT INTO activities (deal_id, type, title, description, date, completed, organization_id, owner_id, created_at)
+    SELECT 
+        d.id,
+        (ARRAY['CALL', 'MEETING', 'EMAIL', 'TASK', 'NOTE'])[1 + floor(random() * 5)::int],
+        (ARRAY['Follow-up', 'Apresentação', 'Proposta', 'Negociação', 'Reunião', 'Email', 'Call', 'Demo'])[1 + floor(random() * 8)::int],
+        'Atividade para ' || d.title,
+        d.created_at + (floor(random() * 30) || ' days')::interval,
+        true,
+        v_organization_id,
+        v_owner_id,
+        d.created_at + (floor(random() * 5) || ' days')::interval
+    FROM deals d
+    WHERE d.organization_id = v_organization_id
+    ORDER BY random()
+    LIMIT 15;
+    
+    RAISE NOTICE '   ✓ 15 atividades passadas';
+    
+    -- Atividades para HOJE (5)
+    INSERT INTO activities (deal_id, type, title, description, date, completed, organization_id, owner_id, created_at)
+    SELECT 
+        d.id,
+        (ARRAY['CALL', 'MEETING', 'TASK'])[1 + floor(random() * 3)::int],
+        (ARRAY['Follow-up urgente', 'Reunião de alinhamento', 'Enviar proposta', 'Ligar para cliente', 'Demo do produto'])[1 + floor(random() * 5)::int],
+        'Tarefa para hoje - ' || d.title,
+        NOW(),
+        false,
+        v_organization_id,
+        v_owner_id,
+        NOW() - ((1 + floor(random() * 3)) || ' days')::interval
+    FROM deals d
+    WHERE d.organization_id = v_organization_id AND d.status = 'OPEN'
+    ORDER BY random()
+    LIMIT 5;
+    
+    RAISE NOTICE '   ✓ 5 atividades para HOJE';
+    
+    -- Atividades ATRASADAS (3)
+    INSERT INTO activities (deal_id, type, title, description, date, completed, organization_id, owner_id, created_at)
+    SELECT 
+        d.id,
+        (ARRAY['CALL', 'TASK'])[1 + floor(random() * 2)::int],
+        'ATRASADA - ' || (ARRAY['Follow-up', 'Enviar documento', 'Ligar'])[1 + floor(random() * 3)::int],
+        'Tarefa atrasada para ' || d.title,
+        NOW() - ((1 + floor(random() * 3)) || ' days')::interval,
+        false,
+        v_organization_id,
+        v_owner_id,
+        NOW() - ((5 + floor(random() * 5)) || ' days')::interval
+    FROM deals d
+    WHERE d.organization_id = v_organization_id AND d.status = 'OPEN'
+    ORDER BY random()
+    LIMIT 3;
+    
+    RAISE NOTICE '   ✓ 3 atividades ATRASADAS';
+    
+    -- FIX: Atividades CONTACT-ONLY (sem deal_id) para "Risco de Churn"
+    INSERT INTO activities (contact_id, type, title, description, date, completed, organization_id, owner_id, created_at)
+    SELECT 
+        c.id,
+        'TASK',
+        'Análise de Carteira: Risco de Churn',
+        'O cliente ' || c.name || ' não compra há mais de 30 dias.',
+        NOW(),
+        false,
+        v_organization_id,
+        v_owner_id,
+        NOW() - ('1 day')::interval
+    FROM contacts c
+    WHERE c.organization_id = v_organization_id
+    AND c.stage = 'CUSTOMER'
+    AND c.status = 'ACTIVE'
+    AND c.last_purchase_date < (NOW() - interval '30 days')::date
+    ORDER BY random()
+    LIMIT 3;
+    
+    RAISE NOTICE '   ✓ 3 atividades CONTACT-ONLY (Risco de Churn)';
+    
+    -- Atividades futuras (7)
+    INSERT INTO activities (deal_id, type, title, description, date, completed, organization_id, owner_id, created_at)
+    SELECT 
+        d.id,
+        (ARRAY['CALL', 'MEETING', 'TASK'])[1 + floor(random() * 3)::int],
+        (ARRAY['Follow-up', 'Apresentação', 'Proposta', 'Demo', 'Reunião de fechamento'])[1 + floor(random() * 5)::int],
+        'Próximo passo para ' || d.title,
+        NOW() + ((1 + floor(random() * 14)) || ' days')::interval,
+        false,
+        v_organization_id,
+        v_owner_id,
+        NOW() - (floor(random() * 7) || ' days')::interval
+    FROM deals d
+    WHERE d.organization_id = v_organization_id AND d.status = 'OPEN'
+    ORDER BY random()
+    LIMIT 7;
+    
+    RAISE NOTICE '   ✓ 7 atividades futuras';
+
+    -- ==========================================================================
+    -- 10. CRIAR DEAL_ITEMS
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '📦 Associando produtos aos deals ganhos...';
+    
+    INSERT INTO deal_items (deal_id, product_id, name, quantity, price, organization_id)
+    SELECT 
+        d.id,
+        p.id,
+        p.name,
+        1 + floor(random() * 5)::int,
+        p.price * (0.9 + random() * 0.2),
+        v_organization_id
+    FROM deals d
+    CROSS JOIN LATERAL (
+        SELECT id, name, price FROM products 
+        WHERE organization_id = v_organization_id 
+        ORDER BY random() 
+        LIMIT (1 + floor(random() * 3)::int)
+    ) p
+    WHERE d.organization_id = v_organization_id AND d.is_won = true;
+    
+    RAISE NOTICE '   ✓ Produtos associados';
+
+    -- ==========================================================================
+    -- 11. USER_SETTINGS
+    -- ==========================================================================
+    INSERT INTO user_settings (user_id, dark_mode, active_board_id, onboarding_completed)
+    VALUES (v_owner_id, true, v_board_vendas, true)
+    ON CONFLICT (user_id) DO NOTHING;
+    
+    RAISE NOTICE '   ✓ Configurações do usuário';
+
+    -- ==========================================================================
+    -- 12. LEADS NÃO CONVERTIDOS
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '📥 Criando leads não convertidos...';
+    
+    FOR i IN 1..5 LOOP
+        v_name := v_first_names[1 + floor(random() * 25)::int] || ' ' || v_last_names[1 + floor(random() * 25)::int];
+        v_email := lower(replace(v_name, ' ', '.')) || '_lead' || i || '@' || v_domains[1 + floor(random() * 7)::int];
+        v_source := v_sources[1 + floor(random() * 8)::int];
+        v_days_ago := floor(random() * 60)::int;
+        
+        INSERT INTO leads (
+            name, email, company_name, source, status, notes,
+            organization_id, owner_id, created_at
+        ) VALUES (
+            v_name, v_email,
+            (SELECT name FROM crm_companies WHERE organization_id = v_organization_id ORDER BY random() LIMIT 1),
+            v_source,
+            (ARRAY['NEW', 'NEW', 'NEW', 'CONTACTED', 'QUALIFIED'])[1 + floor(random() * 5)::int],
+            'Origem: ' || v_source,
+            v_organization_id, v_owner_id,
+            NOW() - (v_days_ago || ' days')::interval
+        );
+    END LOOP;
+    
+    RAISE NOTICE '   ✓ 5 leads criados';
+
+    -- ==========================================================================
+    -- 13. AI_CONVERSATIONS
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '🤖 Criando histórico de conversas com IA...';
+    
+    FOR i IN 1..5 LOOP
+        v_days_ago := floor(random() * 30)::int;
+        INSERT INTO ai_conversations (user_id, conversation_key, messages, created_at, updated_at)
+        VALUES (
+            v_owner_id,
+            (ARRAY['pipeline-analysis', 'follow-up-suggestions', 'weekly-report', 'sales-forecast', 'churn-analysis'])[1 + floor(random() * 5)::int] || '-' || i,
+            jsonb_build_array(
+                jsonb_build_object('role', 'user', 'content', 'Analise meu pipeline atual'),
+                jsonb_build_object('role', 'assistant', 'content', 'Seu pipeline mostra oportunidades saudáveis...')
+            ),
+            NOW() - (v_days_ago || ' days')::interval,
+            NOW() - (v_days_ago || ' days')::interval
+        );
+    END LOOP;
+    
+    RAISE NOTICE '   ✓ 5 conversas com IA';
+
+    -- ==========================================================================
+    -- 14. AI_DECISIONS
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '💡 Criando sugestões da IA...';
+    
+    INSERT INTO ai_decisions (
+        user_id, deal_id, contact_id, decision_type, title, description,
+        confidence_score, status, created_at
+    )
+    SELECT 
+        v_owner_id,
+        d.id,
+        d.contact_id,
+        (ARRAY['FOLLOW_UP', 'PRIORITY_CHANGE', 'NEXT_ACTION', 'RISK_ALERT'])[1 + floor(random() * 4)::int],
+        (ARRAY['Follow-up recomendado', 'Mudança de prioridade', 'Próxima ação', 'Alerta de risco'])[1 + floor(random() * 4)::int],
+        (ARRAY[
+            'Recomendo entrar em contato hoje - o lead está quente!',
+            'Este deal está parado há 7 dias. Sugiro um follow-up.',
+            'Cliente demonstrou interesse no produto X. Considere upsell.',
+            'Risco de perda: concorrente mencionado na última reunião.',
+            'Momento ideal para enviar proposta baseado no histórico.'
+        ])[1 + floor(random() * 5)::int],
+        (0.7 + random() * 0.3)::numeric(3,2),
+        (ARRAY['pending', 'pending', 'pending', 'completed', 'dismissed'])[1 + floor(random() * 5)::int],
+        NOW() - (floor(random() * 14) || ' days')::interval
+    FROM deals d
+    WHERE d.organization_id = v_organization_id AND d.status = 'OPEN'
+    ORDER BY random()
+    LIMIT 5;
+    
+    RAISE NOTICE '   ✓ 5 sugestões da IA';
+
+    -- ==========================================================================
+    -- 15. SYSTEM_NOTIFICATIONS (FIX: estava vazio)
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '🔔 Criando notificações do sistema...';
+    
+    INSERT INTO system_notifications (organization_id, type, title, message, link, severity, created_at)
+    VALUES 
+    (v_organization_id, 'welcome', 'Bem-vindo ao NossoCRM! 🎉', 'Seu ambiente está configurado e pronto para uso.', '/dashboard', 'low', NOW() - interval '7 days'),
+    (v_organization_id, 'feature', 'Nova funcionalidade: Inbox Unificado', 'Agora você pode gerenciar todas as suas atividades em um só lugar.', '/inbox', 'medium', NOW() - interval '3 days'),
+    (v_organization_id, 'alert', 'Deals parados detectados', 'Você tem 3 negociações paradas há mais de 7 dias. Clique para ver.', '/boards', 'high', NOW() - interval '1 day'),
+    (v_organization_id, 'tip', 'Dica: Use o AI Hub', 'O assistente de IA pode analisar seu pipeline e sugerir ações.', '/ai-hub', 'low', NOW()),
+    (v_organization_id, 'security', 'Backup realizado com sucesso', 'Seu último backup foi concluído às ' || to_char(NOW(), 'HH24:MI'), NULL, 'low', NOW());
+    
+    RAISE NOTICE '   ✓ 5 notificações do sistema';
+
+    -- ==========================================================================
+    -- 16. EDGE CASES
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '🎯 Criando cenários de edge cases...';
+    
+    UPDATE contacts SET email = NULL WHERE id IN (SELECT id FROM contacts WHERE organization_id = v_organization_id ORDER BY random() LIMIT 1);
+    UPDATE contacts SET phone = NULL WHERE id IN (SELECT id FROM contacts WHERE organization_id = v_organization_id AND email IS NOT NULL ORDER BY random() LIMIT 1);
+    UPDATE deals SET value = 0 WHERE id IN (SELECT id FROM deals WHERE organization_id = v_organization_id AND status = 'OPEN' ORDER BY random() LIMIT 1);
+    UPDATE deals SET value = 500000 WHERE id IN (SELECT id FROM deals WHERE organization_id = v_organization_id AND status = 'OPEN' ORDER BY random() LIMIT 1);
+    UPDATE contacts SET notes = 'Este é um contato estratégico. Histórico: Primeiro contato em janeiro, demonstrou interesse no Enterprise. Reunião com equipe técnica em fevereiro.'
+    WHERE id IN (SELECT id FROM contacts WHERE organization_id = v_organization_id ORDER BY random() LIMIT 2);
+    
+    RAISE NOTICE '   ✓ Edge cases criados';
+
+    -- ==========================================================================
+    -- RESUMO FINAL
+    -- ==========================================================================
+    RAISE NOTICE '';
+    RAISE NOTICE '══════════════════════════════════════════════════════════';
+    RAISE NOTICE '✨ SEED v3 COMPLETO (AUDIT FIXES)';
+    RAISE NOTICE '══════════════════════════════════════════════════════════';
+    RAISE NOTICE '   ✅ 3 Boards (Pré-vendas, Pipeline, Onboarding)';
+    RAISE NOTICE '   ✅ 15 Empresas CRM (FIX: linkadas a contatos)';
+    RAISE NOTICE '   ✅ 100 Contatos (70%% com client_company_id)';
+    RAISE NOTICE '   ✅ 10 Produtos';
+    RAISE NOTICE '   ✅ 30 Deals com tags (VIP, Enterprise, Urgente)';
+    RAISE NOTICE '   ✅ 30+ Atividades (incl. contact-only para Churn)';
+    RAISE NOTICE '   ✅ 12 Tags';
+    RAISE NOTICE '   ✅ 3 Custom Field Definitions';
+    RAISE NOTICE '   ✅ 5 System Notifications (FIX: antes vazio)';
+    RAISE NOTICE '   ✅ 5 Leads, 5 AI Conversations, 5 AI Decisions';
+    RAISE NOTICE '   ✅ is_won/is_lost flags corretos';
+    RAISE NOTICE '══════════════════════════════════════════════════════════';
+
+END $$;

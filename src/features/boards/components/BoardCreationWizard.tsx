@@ -8,6 +8,7 @@ import {
   refineBoardWithAI,
   GeneratedBoard,
 } from '@/services/geminiService';
+import { isConsentError } from '@/lib/supabase/ai-proxy';
 import { Board, BoardStage } from '@/types';
 import { useCRM } from '@/context/CRMContext';
 import { AIProcessingModal, ProcessingStep, SimulatorPhase } from './Modals/AIProcessingModal';
@@ -452,18 +453,18 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
     // Apply strategy and randomize name
     const finalAgentPersona = finalStrategy.agentPersona
       ? {
-          ...finalStrategy.agentPersona,
-          name: randomName,
-          // Replace occurrences of the old name in behavior and role
-          behavior: finalStrategy.agentPersona.behavior.replace(
-            new RegExp(finalStrategy.agentPersona.name, 'g'),
-            randomName
-          ),
-          role: finalStrategy.agentPersona.role.replace(
-            new RegExp(finalStrategy.agentPersona.name, 'g'),
-            randomName
-          ),
-        }
+        ...finalStrategy.agentPersona,
+        name: randomName,
+        // Replace occurrences of the old name in behavior and role
+        behavior: finalStrategy.agentPersona.behavior.replace(
+          new RegExp(finalStrategy.agentPersona.name, 'g'),
+          randomName
+        ),
+        role: finalStrategy.agentPersona.role.replace(
+          new RegExp(finalStrategy.agentPersona.name, 'g'),
+          randomName
+        ),
+      }
       : undefined;
 
     // IMPORTANT: Use boardToCreate.name (not .boardName)
@@ -546,11 +547,10 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                     className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
                   >
                     <div
-                      className={`max-w-[90%] p-3 rounded-xl text-sm whitespace-pre-wrap ${
-                        msg.role === 'user'
+                      className={`max-w-[90%] p-3 rounded-xl text-sm whitespace-pre-wrap ${msg.role === 'user'
                           ? 'bg-primary-600 text-white rounded-br-none'
                           : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-none'
-                      }`}
+                        }`}
                     >
                       {msg.content
                         .split(/(\*\*.*?\*\*)/)
@@ -568,11 +568,10 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                       <div className="mt-2 flex gap-2">
                         <button
                           onClick={() => handlePreviewToggle(msg.proposalData!)}
-                          className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1 ${
-                            previewBoard === msg.proposalData
+                          className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors flex items-center gap-1 ${previewBoard === msg.proposalData
                               ? 'bg-blue-100 border-blue-300 text-blue-700 dark:bg-blue-900/30 dark:border-blue-500/50 dark:text-blue-300'
                               : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-700'
-                          }`}
+                            }`}
                         >
                           {previewBoard === msg.proposalData
                             ? '👁️ Esconder Preview'
@@ -636,21 +635,19 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                 <div className="flex p-1 bg-slate-100 dark:bg-white/5 rounded-xl mb-6">
                   <button
                     onClick={() => setActiveTab('official')}
-                    className={`flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all duration-200 ${
-                      activeTab === 'official'
+                    className={`flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all duration-200 ${activeTab === 'official'
                         ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
-                    }`}
+                      }`}
                   >
                     Oficiais
                   </button>
                   <button
                     onClick={() => setActiveTab('community')}
-                    className={`flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all duration-200 ${
-                      activeTab === 'community'
+                    className={`flex-1 py-2 px-4 text-sm font-medium rounded-lg transition-all duration-200 ${activeTab === 'community'
                         ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm'
                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300'
-                    }`}
+                      }`}
                   >
                     Comunidade
                   </button>
@@ -725,9 +722,9 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                                 {template.description}
                               </p>
                               <div className="mt-3 pt-3 border-t border-slate-100 dark:border-white/5 flex gap-2 shrink-0 overflow-hidden">
-                                {template.tags.slice(0, 2).map(tag => (
+                                {template.tags.slice(0, 2).map((tag, tagIndex) => (
                                   <span
-                                    key={tag}
+                                    key={`${key}-tag-${tagIndex}`}
                                     className="px-2 py-1 rounded-md bg-slate-50 dark:bg-white/5 text-[10px] font-medium text-slate-500 dark:text-slate-400 border border-slate-100 dark:border-white/5 whitespace-nowrap"
                                   >
                                     #{tag}
@@ -774,9 +771,9 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                               {template.description}
                             </p>
                             <div className="flex gap-2">
-                              {template.tags.map(tag => (
+                              {template.tags.map((tag, tagIndex) => (
                                 <span
-                                  key={tag}
+                                  key={`${template.id}-tag-${tagIndex}`}
                                   className="px-2 py-1 rounded-md bg-white dark:bg-black/20 text-xs text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-white/5"
                                 >
                                   #{tag}
@@ -859,10 +856,10 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                                 )}
                                 {index ===
                                   OFFICIAL_JOURNEYS[selectedPlaybookId].boards.length - 1 && (
-                                  <span className="px-2.5 py-1 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 text-[10px] font-bold uppercase tracking-wide">
-                                    Fim
-                                  </span>
-                                )}
+                                    <span className="px-2.5 py-1 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 text-[10px] font-bold uppercase tracking-wide">
+                                      Fim
+                                    </span>
+                                  )}
                               </div>
                             </div>
 
@@ -905,18 +902,18 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                       <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 text-white mb-5 shadow-lg shadow-orange-500/30">
                         <AlertCircle size={32} />
                       </div>
-                      
+
                       {/* Title */}
                       <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">
                         Configure a Inteligência Artificial
                       </h3>
-                      
+
                       {/* Description */}
                       <p className="text-slate-600 dark:text-slate-400 mb-6 leading-relaxed">
-                        Para criar boards com IA, você precisa configurar uma chave de API. 
+                        Para criar boards com IA, você precisa configurar uma chave de API.
                         Suportamos <strong className="text-slate-800 dark:text-slate-200">Google Gemini</strong>, <strong className="text-slate-800 dark:text-slate-200">OpenAI</strong> e <strong className="text-slate-800 dark:text-slate-200">Anthropic</strong>.
                       </p>
-                      
+
                       {/* Card with instructions */}
                       <div className="bg-slate-50 dark:bg-white/5 rounded-xl p-5 border border-slate-200 dark:border-white/10 mb-5 text-left">
                         <h4 className="font-semibold text-slate-800 dark:text-slate-200 mb-3 flex items-center gap-2">
@@ -938,7 +935,7 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                           </li>
                         </ol>
                       </div>
-                      
+
                       {/* CTA Button */}
                       <button
                         onClick={() => {
@@ -953,36 +950,36 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                     </div>
                   </div>
                 ) : (
-                <div>
-                  <div className="flex items-center gap-2 mb-4">
-                    <Sparkles size={20} className="text-primary-600 dark:text-primary-400" />
-                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
-                      Descreva seu negócio em 1 frase:
-                    </h3>
-                  </div>
-
-                  <input
-                    type="text"
-                    value={aiInput}
-                    onChange={e => setAiInput(e.target.value)}
-                    placeholder="Ex: Sou tatuador, Vendo cursos online, Consultoria de TI..."
-                    className="w-full px-4 py-3 rounded-lg border-2 border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                    autoFocus
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') handleAIGenerate();
-                    }}
-                  />
-
-                  {error && (
-                    <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20 rounded-lg">
-                      <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+                  <div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Sparkles size={20} className="text-primary-600 dark:text-primary-400" />
+                      <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+                        Descreva seu negócio em 1 frase:
+                      </h3>
                     </div>
-                  )}
 
-                  <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
-                    💡 A IA vai criar um board personalizado para você!
-                  </p>
-                </div>
+                    <input
+                      type="text"
+                      value={aiInput}
+                      onChange={e => setAiInput(e.target.value)}
+                      placeholder="Ex: Sou tatuador, Vendo cursos online, Consultoria de TI..."
+                      className="w-full px-4 py-3 rounded-lg border-2 border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 text-slate-900 dark:text-white placeholder:text-slate-400 focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                      autoFocus
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleAIGenerate();
+                      }}
+                    />
+
+                    {error && (
+                      <div className="mt-3 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-500/20 rounded-lg">
+                        <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+                      </div>
+                    )}
+
+                    <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+                      💡 A IA vai criar um board personalizado para você!
+                    </p>
+                  </div>
                 )}
               </div>
             )}
@@ -1127,23 +1124,23 @@ export const BoardCreationWizard: React.FC<BoardCreationWizardProps> = ({
                 Voltar
               </button>
               {aiApiKey?.trim() && (
-              <button
-                onClick={handleAIGenerate}
-                disabled={!aiInput.trim() || isGenerating}
-                className="px-6 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-              >
-                {isGenerating ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" />
-                    Gerando...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={16} />
-                    Gerar Board
-                  </>
-                )}
-              </button>
+                <button
+                  onClick={handleAIGenerate}
+                  disabled={!aiInput.trim() || isGenerating}
+                  className="px-6 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isGenerating ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Gerando...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={16} />
+                      Gerar Board
+                    </>
+                  )}
+                </button>
               )}
             </div>
           )}

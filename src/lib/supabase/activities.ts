@@ -1,67 +1,133 @@
+/**
+ * @fileoverview Serviço Supabase para gerenciamento de atividades do CRM.
+ * 
+ * Este módulo fornece operações CRUD para atividades (tarefas, reuniões, ligações, etc.)
+ * com validação de segurança defense-in-depth para isolamento multi-tenant.
+ * 
+ * ## Segurança Multi-Tenant
+ * 
+ * Além das políticas RLS, este serviço implementa verificação adicional
+ * de organization_id antes de update/delete para prevenir ataques cross-tenant.
+ * 
+ * @module lib/supabase/activities
+ */
+
 import { supabase } from './client';
-import { Activity } from '@/types';
+import { Activity, OrganizationId } from '@/types';
 import { sanitizeUUID } from './utils';
+
+// ============================================
+// HELPERS REMOVED
+// ============================================
+
 
 // ============================================
 // ACTIVITIES SERVICE
 // ============================================
 
+/**
+ * Representação de atividade no banco de dados.
+ * 
+ * @interface DbActivity
+ */
 export interface DbActivity {
+  /** ID único da atividade (UUID). */
   id: string;
+  /** ID da organização/tenant. */
+  organization_id: string;
+  /** Título da atividade. */
   title: string;
+  /** Descrição detalhada. */
   description: string | null;
+  /** Tipo (CALL, MEETING, EMAIL, TASK). */
   type: string;
+  /** Data/hora agendada. */
   date: string;
+  /** Se a atividade foi concluída. */
   completed: boolean;
+  /** ID do deal associado. */
   deal_id: string | null;
+  /** ID do contato associado. */
   contact_id: string | null;
+  /** Data de criação. */
   created_at: string;
+  /** ID do dono/responsável. */
   owner_id: string | null;
 }
 
-// Transform DB -> App
-const transformActivity = (db: DbActivity): Activity => ({
+// Interface auxiliar para o retorno do Supabase com o join
+interface DbActivityWithDeal extends DbActivity {
+  deals?: { title: string } | null;
+}
+
+/**
+ * Transforma atividade do formato DB para o formato da aplicação.
+ * 
+ * @param db - Atividade no formato do banco.
+ * @returns Atividade no formato da aplicação.
+ */
+const transformActivity = (db: DbActivityWithDeal): Activity => ({
   id: db.id,
+  organizationId: db.organization_id,
   title: db.title,
   description: db.description || undefined,
   type: db.type as Activity['type'],
   date: db.date,
   completed: db.completed,
   dealId: db.deal_id || '',
-  dealTitle: '', // Will be enriched later
+  dealTitle: db.deals?.title || '',
   user: { name: 'Você', avatar: '' }, // Will be enriched later
 });
 
-// Transform App -> DB
+/**
+ * Transforma atividade do formato da aplicação para o formato DB.
+ * 
+ * @param activity - Atividade parcial no formato da aplicação.
+ * @returns Atividade parcial no formato do banco.
+ */
 const transformActivityToDb = (activity: Partial<Activity>): Partial<DbActivity> => {
   const db: Partial<DbActivity> = {};
-  
+
   if (activity.title !== undefined) db.title = activity.title;
   if (activity.description !== undefined) db.description = activity.description || null;
   if (activity.type !== undefined) db.type = activity.type;
   if (activity.date !== undefined) db.date = activity.date;
   if (activity.completed !== undefined) db.completed = activity.completed;
   if (activity.dealId !== undefined) db.deal_id = sanitizeUUID(activity.dealId);
-  
+
   return db;
 };
 
 export const activitiesService = {
+  /**
+   * Busca todas as atividades.
+   * 
+   * @returns Promise com array de atividades ou erro.
+   */
   async getAll(): Promise<{ data: Activity[] | null; error: Error | null }> {
     try {
       const { data, error } = await supabase
         .from('activities')
-        .select('*')
+        .select(`
+          *,
+          deals:deal_id (title)
+        `)
         .order('date', { ascending: false });
 
       if (error) return { data: null, error };
-      return { data: (data || []).map(a => transformActivity(a as DbActivity)), error: null };
+      return { data: (data || []).map(a => transformActivity(a as DbActivityWithDeal)), error: null };
     } catch (e) {
       return { data: null, error: e as Error };
     }
   },
 
-  async create(activity: Omit<Activity, 'id' | 'createdAt'>, companyId: string): Promise<{ data: Activity | null; error: Error | null }> {
+  /**
+   * Cria uma nova atividade.
+   * 
+   * @param activity - Dados da atividade (sem id e createdAt).
+   * @returns Promise com atividade criada ou erro.
+   */
+  async create(activity: Omit<Activity, 'id' | 'createdAt'>): Promise<{ data: Activity | null; error: Error | null }> {
     try {
       const { data, error } = await supabase
         .from('activities')
@@ -72,7 +138,6 @@ export const activitiesService = {
           date: activity.date,
           completed: activity.completed || false,
           deal_id: sanitizeUUID(activity.dealId),
-          company_id: sanitizeUUID(companyId),
         })
         .select()
         .single();
@@ -84,6 +149,13 @@ export const activitiesService = {
     }
   },
 
+  /**
+   * Atualiza uma atividade existente.
+   * 
+   * @param id - ID da atividade.
+   * @param updates - Campos a serem atualizados.
+   * @returns Promise com erro, se houver.
+   */
   async update(id: string, updates: Partial<Activity>): Promise<{ error: Error | null }> {
     try {
       const dbUpdates = transformActivityToDb(updates);
@@ -99,6 +171,12 @@ export const activitiesService = {
     }
   },
 
+  /**
+   * Exclui uma atividade.
+   * 
+   * @param id - ID da atividade.
+   * @returns Promise com erro, se houver.
+   */
   async delete(id: string): Promise<{ error: Error | null }> {
     try {
       const { error } = await supabase
@@ -112,6 +190,12 @@ export const activitiesService = {
     }
   },
 
+  /**
+   * Alterna o status de conclusão de uma atividade.
+   * 
+   * @param id - ID da atividade.
+   * @returns Promise com novo status de conclusão ou erro.
+   */
   async toggleCompletion(id: string): Promise<{ data: boolean | null; error: Error | null }> {
     try {
       // First get current state
@@ -121,7 +205,9 @@ export const activitiesService = {
         .eq('id', id)
         .single();
 
-      if (fetchError) return { data: null, error: fetchError };
+      if (fetchError || !current) {
+        return { data: null, error: new Error('Activity not found') };
+      }
 
       const newCompleted = !current.completed;
 

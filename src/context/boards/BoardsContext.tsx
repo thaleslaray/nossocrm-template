@@ -98,12 +98,12 @@ export const BoardsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
   // ============================================
   const addBoard = useCallback(
     async (board: Omit<Board, 'id' | 'createdAt'>, order?: number): Promise<Board | null> => {
-      if (!profile?.company_id) {
-        console.error('Usuário não tem empresa associada');
+      if (!profile) {
+        console.error('Usuário não autenticado');
         return null;
       }
 
-      const { data, error: addError } = await boardsService.create(board, profile.company_id, order);
+      const { data, error: addError } = await boardsService.create(board, order);
 
       if (addError) {
         console.error('Erro ao criar board:', addError.message);
@@ -115,11 +115,11 @@ export const BoardsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
       return data;
     },
-    [profile?.company_id, queryClient]
+    [profile?.organization_id, queryClient]
   );
 
   const updateBoard = useCallback(async (id: string, updates: Partial<Board>) => {
-    const { error: updateError } = await boardsService.update(id, updates, profile?.company_id);
+    const { error: updateError } = await boardsService.update(id, updates);
 
     if (updateError) {
       console.error('Erro ao atualizar board:', updateError.message);
@@ -128,7 +128,7 @@ export const BoardsProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
     // Invalida cache para TanStack Query atualizar
     await queryClient.invalidateQueries({ queryKey: queryKeys.boards.all });
-  }, [profile?.company_id, queryClient]);
+  }, [queryClient]);
 
   const deleteBoard = useCallback(async (id: string) => {
     const { error: deleteError } = await boardsService.delete(id);

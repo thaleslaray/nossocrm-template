@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getErrorMessage } from '@/utils/errorUtils';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '@/lib/supabase';
 import { Loader2, Mail, Lock, User, ArrowRight, CheckCircle2, AlertCircle } from 'lucide-react';
@@ -32,7 +33,7 @@ const JoinPage: React.FC = () => {
 
             try {
                 const { data, error } = await supabase
-                    .from('company_invites')
+                    .from('organization_invites')
                     .select('*')
                     .eq('token', token)
                     .is('used_at', null)
@@ -52,7 +53,7 @@ const JoinPage: React.FC = () => {
                     setFormData(prev => ({ ...prev, email: data.email }));
                 }
             } catch (err: any) {
-                setError(err.message);
+                setError(getErrorMessage(err));
             } finally {
                 setValidating(false);
             }
@@ -94,7 +95,7 @@ const JoinPage: React.FC = () => {
             navigate('/');
         } catch (err: any) {
             console.error(err);
-            setError(err.message || 'Falha ao criar conta. Tente novamente.');
+            setError(getErrorMessage(err));
         } finally {
             setLoading(false);
         }
@@ -149,7 +150,7 @@ const JoinPage: React.FC = () => {
                 <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-white/10 rounded-2xl shadow-xl p-8 backdrop-blur-sm">
                     <form className="space-y-5" onSubmit={handleSubmit}>
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                            <label htmlFor="join-name" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                                 Nome Completo
                             </label>
                             <div className="relative">
@@ -157,8 +158,10 @@ const JoinPage: React.FC = () => {
                                     <User className="h-5 w-5 text-slate-400" />
                                 </div>
                                 <input
+                                    id="join-name"
                                     type="text"
                                     required
+                                    aria-required="true"
                                     className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all sm:text-sm"
                                     placeholder="Seu nome"
                                     value={formData.name}
@@ -168,7 +171,7 @@ const JoinPage: React.FC = () => {
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                            <label htmlFor="join-email" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                                 Email
                             </label>
                             <div className="relative">
@@ -176,8 +179,10 @@ const JoinPage: React.FC = () => {
                                     <Mail className="h-5 w-5 text-slate-400" />
                                 </div>
                                 <input
+                                    id="join-email"
                                     type="email"
                                     required
+                                    aria-required="true"
                                     disabled={!!inviteData?.email}
                                     className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all sm:text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                                     placeholder="seu@email.com"
@@ -188,7 +193,7 @@ const JoinPage: React.FC = () => {
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                            <label htmlFor="join-password" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
                                 Senha
                             </label>
                             <div className="relative">
@@ -196,8 +201,10 @@ const JoinPage: React.FC = () => {
                                     <Lock className="h-5 w-5 text-slate-400" />
                                 </div>
                                 <input
+                                    id="join-password"
                                     type="password"
                                     required
+                                    aria-required="true"
                                     minLength={6}
                                     className="block w-full pl-10 pr-3 py-2.5 border border-slate-300 dark:border-slate-700 rounded-xl bg-slate-50 dark:bg-slate-900/50 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary-500/50 focus:border-primary-500 transition-all sm:text-sm"
                                     placeholder="••••••••"

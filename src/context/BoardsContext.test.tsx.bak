@@ -1,0 +1,308 @@
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { BoardsProvider, useBoards } from '@/context/boards/BoardsContext';
+import { Board, BoardStage } from '@/types';
+import React from 'react';
+
+// Mock localStorage
+const localStorageMock = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: vi.fn((key: string) => store[key] || null),
+    setItem: vi.fn((key: string, value: string) => {
+      store[key] = value;
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete store[key];
+    }),
+    clear: vi.fn(() => {
+      store = {};
+    }),
+  };
+})();
+
+Object.defineProperty(window, 'localStorage', { value: localStorageMock });
+
+const wrapper = ({ children }: { children: React.ReactNode }) => (
+  <BoardsProvider>{children}</BoardsProvider>
+);
+
+const createTestBoard = (overrides: Partial<Board> = {}): Omit<Board, 'id' | 'createdAt'> => ({
+  name: 'Test Board',
+  description: 'Test Description',
+  stages: [
+    { id: 'stage-1', label: 'Stage 1', color: 'bg-blue-500' },
+    { id: 'stage-2', label: 'Stage 2', color: 'bg-green-500' },
+  ],
+  isDefault: false,
+  ...overrides,
+});
+
+describe('BoardsContext', () => {
+  beforeEach(() => {
+    localStorageMock.clear();
+    vi.clearAllMocks();
+  });
+
+  describe('Initialization', () => {
+    it('should provide all required context values', () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      expect(result.current.boards).toBeDefined();
+      expect(Array.isArray(result.current.boards)).toBe(true);
+      expect(result.current.activeBoard).toBeDefined();
+      expect(result.current.activeBoardId).toBeDefined();
+      expect(typeof result.current.addBoard).toBe('function');
+      expect(typeof result.current.updateBoard).toBe('function');
+      expect(typeof result.current.deleteBoard).toBe('function');
+      expect(typeof result.current.setActiveBoardId).toBe('function');
+      expect(typeof result.current.getBoardById).toBe('function');
+    });
+
+    it('should throw when used outside provider', () => {
+      expect(() => {
+        renderHook(() => useBoards());
+      }).toThrow('useBoards must be used within a BoardsProvider');
+    });
+
+    it('should have at least one default board', () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      expect(result.current.boards.length).toBeGreaterThan(0);
+      expect(result.current.activeBoard).toBeDefined();
+    });
+  });
+
+  describe('CRUD Operations', () => {
+    it('should add a new board', async () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      const initialCount = result.current.boards.length;
+
+      act(() => {
+        result.current.addBoard(createTestBoard({ name: 'New Board' }));
+      });
+
+      await waitFor(() => {
+        expect(result.current.boards.length).toBe(initialCount + 1);
+        expect(result.current.boards.some(b => b.name === 'New Board')).toBe(true);
+      });
+    });
+
+    it('should return the new board when adding', async () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      let newBoard: Board | undefined;
+
+      act(() => {
+        newBoard = result.current.addBoard(createTestBoard({ name: 'Return Test Board' }));
+      });
+
+      await waitFor(() => {
+        expect(newBoard).toBeDefined();
+        expect(newBoard?.id).toBeDefined();
+        expect(newBoard?.name).toBe('Return Test Board');
+        expect(newBoard?.createdAt).toBeDefined();
+      });
+    });
+
+    it('should update board properties', async () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      let boardId: string = '';
+
+      act(() => {
+        const newBoard = result.current.addBoard(createTestBoard({ name: 'Original Name' }));
+        boardId = newBoard.id;
+      });
+
+      await waitFor(() => {
+        expect(result.current.boards.some(b => b.id === boardId)).toBe(true);
+      });
+
+      act(() => {
+        result.current.updateBoard(boardId, {
+          name: 'Updated Name',
+          description: 'New description',
+        });
+      });
+
+      await waitFor(() => {
+        const updated = result.current.boards.find(b => b.id === boardId);
+        expect(updated?.name).toBe('Updated Name');
+        expect(updated?.description).toBe('New description');
+      });
+    });
+
+    it('should delete non-default board', async () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      let boardId: string = '';
+
+      act(() => {
+        const newBoard = result.current.addBoard(
+          createTestBoard({ name: 'To Delete', isDefault: false })
+        );
+        boardId = newBoard.id;
+      });
+
+      await waitFor(() => {
+        expect(result.current.boards.some(b => b.id === boardId)).toBe(true);
+      });
+
+      const countBeforeDelete = result.current.boards.length;
+
+      act(() => {
+        result.current.deleteBoard(boardId);
+      });
+
+      await waitFor(() => {
+        expect(result.current.boards.length).toBe(countBeforeDelete - 1);
+        expect(result.current.boards.some(b => b.id === boardId)).toBe(false);
+      });
+    });
+  });
+
+  describe('Active Board', () => {
+    it('should switch active board', async () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      let newBoardId: string = '';
+
+      act(() => {
+        const newBoard = result.current.addBoard(createTestBoard({ name: 'Switch To' }));
+        newBoardId = newBoard.id;
+      });
+
+      await waitFor(() => {
+        expect(result.current.boards.some(b => b.id === newBoardId)).toBe(true);
+      });
+
+      act(() => {
+        result.current.setActiveBoardId(newBoardId);
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeBoardId).toBe(newBoardId);
+        expect(result.current.activeBoard.id).toBe(newBoardId);
+      });
+    });
+
+    it('should get board by id', async () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      let boardId: string = '';
+
+      act(() => {
+        const newBoard = result.current.addBoard(createTestBoard({ name: 'Get By Id' }));
+        boardId = newBoard.id;
+      });
+
+      await waitFor(() => {
+        const board = result.current.getBoardById(boardId);
+        expect(board).toBeDefined();
+        expect(board?.name).toBe('Get By Id');
+      });
+    });
+
+    it('should return undefined for non-existent board id', () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      const board = result.current.getBoardById('non-existent-id');
+      expect(board).toBeUndefined();
+    });
+  });
+
+  describe('Board Stages', () => {
+    it('should add board with custom stages', async () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      const customStages: BoardStage[] = [
+        { id: 'custom-1', label: 'Custom Stage 1', color: 'bg-purple-500' },
+        { id: 'custom-2', label: 'Custom Stage 2', color: 'bg-pink-500' },
+        { id: 'custom-3', label: 'Custom Stage 3', color: 'bg-orange-500' },
+      ];
+
+      let boardId: string = '';
+
+      act(() => {
+        const newBoard = result.current.addBoard(
+          createTestBoard({
+            name: 'Custom Stages Board',
+            stages: customStages,
+          })
+        );
+        boardId = newBoard.id;
+      });
+
+      await waitFor(() => {
+        const board = result.current.boards.find(b => b.id === boardId);
+        expect(board?.stages.length).toBe(3);
+        expect(board?.stages[0].label).toBe('Custom Stage 1');
+      });
+    });
+
+    it('should update board stages', async () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      let boardId: string = '';
+
+      act(() => {
+        const newBoard = result.current.addBoard(createTestBoard({ name: 'Update Stages' }));
+        boardId = newBoard.id;
+      });
+
+      await waitFor(() => {
+        expect(result.current.boards.some(b => b.id === boardId)).toBe(true);
+      });
+
+      const newStages: BoardStage[] = [
+        { id: 'new-1', label: 'New Stage 1', color: 'bg-red-500' },
+        { id: 'new-2', label: 'New Stage 2', color: 'bg-yellow-500' },
+      ];
+
+      act(() => {
+        result.current.updateBoard(boardId, { stages: newStages });
+      });
+
+      await waitFor(() => {
+        const board = result.current.boards.find(b => b.id === boardId);
+        expect(board?.stages.length).toBe(2);
+        expect(board?.stages[0].label).toBe('New Stage 1');
+      });
+    });
+  });
+
+  describe('setBoards', () => {
+    it('should replace all boards', async () => {
+      const { result } = renderHook(() => useBoards(), { wrapper });
+
+      const newBoards: Board[] = [
+        {
+          id: 'board-1',
+          name: 'Board 1',
+          stages: [{ id: 's1', label: 'Stage', color: 'bg-blue-500' }],
+          createdAt: new Date().toISOString(),
+          isDefault: true,
+        },
+        {
+          id: 'board-2',
+          name: 'Board 2',
+          stages: [{ id: 's2', label: 'Stage', color: 'bg-green-500' }],
+          createdAt: new Date().toISOString(),
+          isDefault: false,
+        },
+      ];
+
+      act(() => {
+        result.current.setBoards(newBoards);
+      });
+
+      await waitFor(() => {
+        expect(result.current.boards.length).toBe(2);
+        expect(result.current.boards.some(b => b.id === 'board-1')).toBe(true);
+        expect(result.current.boards.some(b => b.id === 'board-2')).toBe(true);
+      });
+    });
+  });
+});

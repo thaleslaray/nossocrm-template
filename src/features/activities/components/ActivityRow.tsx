@@ -45,7 +45,7 @@ export const ActivityRow: React.FC<ActivityRowProps> = ({
         // Procura em TODOS os boards, não só no ativo
         for (const board of boards) {
             const stage = board.stages.find(s => s.id === status);
-            if (stage) return stage.label || stage.name;
+            if (stage) return stage.label;
         }
 
         // Fallback para mapeamento legado

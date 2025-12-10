@@ -1,9 +1,11 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useToast } from '@/context/ToastContext';
-import { Contact, ContactStage } from '@/types';
+import { Contact, ContactStage, PaginationState, ContactsServerFilters, DEFAULT_PAGE_SIZE, ContactSortableColumn } from '@/types';
 import {
   useContacts,
+  useContactsPaginated,
+  useContactStageCounts,
   useCompanies,
   useCreateContact,
   useUpdateContact,
@@ -13,11 +15,16 @@ import {
 } from '@/lib/query/hooks/useContactsQuery';
 import { useCreateDeal } from '@/lib/query/hooks/useDealsQuery';
 import { useBoards } from '@/lib/query/hooks/useBoardsQuery';
-import { useRealtimeSync } from '@/lib/realtime';
+import { useRealtimeSync } from '@/lib/realtime/useRealtimeSync';
 
 export const useContactsController = () => {
+  // T017: Pagination state
+  const [pagination, setPagination] = useState<PaginationState>({
+    pageIndex: 0,
+    pageSize: DEFAULT_PAGE_SIZE,
+  });
+
   // TanStack Query hooks
-  const { data: contacts = [], isLoading: contactsLoading } = useContacts();
   const { data: companies = [], isLoading: companiesLoading } = useCompanies();
   const { data: boards = [] } = useBoards();
   const createContactMutation = useCreateContact();
@@ -50,6 +57,85 @@ export const useContactsController = () => {
   const [viewMode, setViewMode] = useState<'people' | 'companies'>('people');
   const [isFilterOpen, setIsFilterOpen] = useState(false);
   const [dateRange, setDateRange] = useState({ start: '', end: '' });
+
+  // Sorting state
+  const [sortBy, setSortBy] = useState<ContactSortableColumn>('created_at');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
+
+  // Toggle sort handler
+  const handleSort = useCallback((column: ContactSortableColumn) => {
+    if (sortBy === column) {
+      // Toggle direction if same column
+      setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New column, default to desc
+      setSortBy(column);
+      setSortOrder('desc');
+    }
+    // Reset to first page when sorting changes
+    setPagination(prev => ({ ...prev, pageIndex: 0 }));
+  }, [sortBy]);
+
+  // T027-T028: Build server filters from state
+  const serverFilters = useMemo<ContactsServerFilters | undefined>(() => {
+    const filters: ContactsServerFilters = {};
+
+    if (search.trim()) {
+      filters.search = search.trim();
+    }
+    if (stageFilter !== 'ALL') {
+      filters.stage = stageFilter;
+    }
+    if (statusFilter !== 'ALL') {
+      filters.status = statusFilter;
+    }
+    if (dateRange.start) {
+      filters.dateStart = dateRange.start;
+    }
+    if (dateRange.end) {
+      filters.dateEnd = dateRange.end;
+    }
+
+    // Always include sorting
+    filters.sortBy = sortBy;
+    filters.sortOrder = sortOrder;
+
+    // Return filters (always has at least sorting)
+    return filters;
+  }, [search, stageFilter, statusFilter, dateRange, sortBy, sortOrder]);
+
+  // T029: Track filter changes to reset pagination synchronously
+  // This prevents 416 errors when filters change while on a high page number
+  const filterKey = `${search}-${stageFilter}-${statusFilter}-${dateRange.start}-${dateRange.end}`;
+  const prevFilterKeyRef = React.useRef(filterKey);
+
+  // Compute effective pagination - reset to page 0 if filters changed
+  const effectivePagination = useMemo((): PaginationState => {
+    if (prevFilterKeyRef.current !== filterKey) {
+      prevFilterKeyRef.current = filterKey;
+      return { ...pagination, pageIndex: 0 };
+    }
+    return pagination;
+  }, [pagination, filterKey]);
+
+  // Sync state after filter reset (for UI consistency)
+  useEffect(() => {
+    if (effectivePagination.pageIndex === 0 && pagination.pageIndex !== 0) {
+      setPagination(prev => ({ ...prev, pageIndex: 0 }));
+    }
+  }, [effectivePagination.pageIndex, pagination.pageIndex]);
+
+  // T018-T019: Use paginated query instead of getAll
+  const {
+    data: paginatedData,
+    isLoading: contactsLoading,
+    isFetching,
+    isPlaceholderData,
+  } = useContactsPaginated(effectivePagination, serverFilters);
+
+  // T019: Extract contacts and totalCount from paginated response
+  const contacts = paginatedData?.data ?? [];
+  const totalCount = paginatedData?.totalCount ?? 0;
 
   // Selection State
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -98,14 +184,14 @@ export const useContactsController = () => {
       // First check if contact has deals
       try {
         const result = await checkHasDealsMutation.mutateAsync(deleteId);
-        
+
         if (result.hasDeals) {
           // Show confirmation for deleting with deals
           setDeleteWithDeals({ id: deleteId, dealCount: result.dealCount, deals: result.deals });
           setDeleteId(null);
           return;
         }
-        
+
         // No deals, delete normally
         deleteContactMutation.mutate(
           { id: deleteId },
@@ -199,7 +285,7 @@ export const useContactsController = () => {
     // Find or create company
     let companyId: string | undefined;
     const existingCompany = companies.find(
-      c => c.name.toLowerCase() === formData.companyName.toLowerCase()
+      c => (c.name || '').toLowerCase() === (formData.companyName || '').toLowerCase()
     );
 
     if (existingCompany) {
@@ -266,13 +352,13 @@ export const useContactsController = () => {
       addToast('Nenhum board disponível. Crie um board primeiro.', 'error');
       return;
     }
-    
+
     // Se só tem 1 board, cria direto sem abrir modal
     if (boards.length === 1) {
       createDealDirectly(contactId, boards[0]);
       return;
     }
-    
+
     // Se tem mais de 1 board, abre modal para escolher
     setCreateDealContactId(contactId);
   };
@@ -280,12 +366,12 @@ export const useContactsController = () => {
   // Create deal directly (used when only 1 board or from modal)
   const createDealDirectly = (contactId: string, board: typeof boards[0]) => {
     const contact = contacts.find(c => c.id === contactId);
-    
+
     if (!contact) {
       addToast('Contato não encontrado', 'error');
       return;
     }
-    
+
     if (!board.stages?.length) {
       addToast('Board não tem estágios configurados', 'error');
       console.error('Board sem stages:', board);
@@ -293,15 +379,8 @@ export const useContactsController = () => {
     }
 
     const firstStage = board.stages[0];
-    
-    // Debug log
-    console.log('Criando deal:', {
-      boardId: board.id,
-      boardName: board.name,
-      stageId: firstStage.id,
-      stageLabel: firstStage.label,
-      contactId: contact.id,
-    });
+
+
 
     createDealMutation.mutate(
       {
@@ -335,7 +414,7 @@ export const useContactsController = () => {
   const createDealForContact = (boardId: string) => {
     const contact = contacts.find(c => c.id === createDealContactId);
     const board = boards.find(b => b.id === boardId);
-    
+
     if (!contact || !board) {
       addToast('Erro ao criar deal', 'error');
       setCreateDealContactId(null);
@@ -361,68 +440,38 @@ export const useContactsController = () => {
     });
   };
 
-  // Filter contacts
-  const filteredContacts = useMemo(() => {
-    return contacts.filter(c => {
-      const matchesSearch =
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.email.toLowerCase().includes(search.toLowerCase());
-
-      // Filtro por estágio
-      const matchesStage = stageFilter === 'ALL' || c.stage === stageFilter;
-
-      let matchesStatus = true;
-      if (statusFilter === 'RISK') {
-        // Risk logic: Active but no purchase > 30 days
-        if (c.status !== 'ACTIVE') {
-          matchesStatus = false;
-        } else {
-          const thirtyDaysAgo = new Date();
-          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-          matchesStatus = !c.lastPurchaseDate || new Date(c.lastPurchaseDate) < thirtyDaysAgo;
-        }
-      } else {
-        matchesStatus = statusFilter === 'ALL' || c.status === statusFilter;
-      }
-
-      let matchesDate = true;
-      if (dateRange.start) {
-        matchesDate = matchesDate && new Date(c.createdAt) >= new Date(dateRange.start);
-      }
-      if (dateRange.end) {
-        const endDate = new Date(dateRange.end);
-        endDate.setHours(23, 59, 59, 999);
-        matchesDate = matchesDate && new Date(c.createdAt) <= endDate;
-      }
-
-      return matchesSearch && matchesStage && matchesStatus && matchesDate;
-    });
-  }, [contacts, search, stageFilter, statusFilter, dateRange]);
+  // T030: Removed client-side filtering - now using server-side filters
+  // contacts already comes filtered from the server
+  const filteredContacts = contacts;
 
   // Filter companies
   const filteredCompanies = useMemo(() => {
     return companies.filter(
       c =>
-        c.name.toLowerCase().includes(search.toLowerCase()) ||
-        (c.industry && c.industry.toLowerCase().includes(search.toLowerCase()))
+        (c.name || '').toLowerCase().includes(search.toLowerCase()) ||
+        (c.industry || '').toLowerCase().includes(search.toLowerCase())
     );
   }, [companies, search]);
 
-  const getCompanyName = (companyId: string) => {
-    return companies.find(c => c.id === companyId)?.name || 'Empresa não vinculada';
+  const getCompanyName = (clientCompanyId: string | undefined | null) => {
+    if (!clientCompanyId) return 'Empresa não vinculada';
+    return companies.find(c => c.id === clientCompanyId)?.name || 'Empresa não vinculada';
   };
 
-  // Contadores por estágio
+  // T031: Stage counts from server (RPC)
+  // Uses dedicated query for accurate totals across all contacts
+  const { data: serverStageCounts = {} } = useContactStageCounts();
+
+  // Transform to expected format with fallbacks
   const stageCounts = useMemo(
     () => ({
-      LEAD: contacts.filter(c => c.stage === ContactStage.LEAD).length,
-      MQL: contacts.filter(c => c.stage === ContactStage.MQL).length,
-      PROSPECT: contacts.filter(c => c.stage === ContactStage.PROSPECT).length,
-      CUSTOMER: contacts.filter(c => c.stage === ContactStage.CUSTOMER).length,
-      OTHER: contacts.filter(c => !Object.values(ContactStage).includes(c.stage as ContactStage))
-        .length,
+      LEAD: serverStageCounts.LEAD || 0,
+      MQL: serverStageCounts.MQL || 0,
+      PROSPECT: serverStageCounts.PROSPECT || 0,
+      CUSTOMER: serverStageCounts.CUSTOMER || 0,
+      OTHER: (serverStageCounts.CHURNED || 0) + (serverStageCounts.OTHER || 0),
     }),
-    [contacts]
+    [serverStageCounts]
   );
 
   return {
@@ -453,11 +502,23 @@ export const useContactsController = () => {
     setFormData,
     isLoading,
 
+    // T017-T020: Pagination state and handlers
+    pagination,
+    setPagination,
+    totalCount,
+    isFetching,
+    isPlaceholderData,
+
     // Selection
     selectedIds,
     toggleSelect,
     toggleSelectAll,
     clearSelection,
+
+    // Sorting
+    sortBy,
+    sortOrder,
+    handleSort,
 
     // Create Deal State
     createDealContactId,

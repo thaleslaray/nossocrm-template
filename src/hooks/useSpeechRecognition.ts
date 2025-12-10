@@ -1,14 +1,64 @@
+/**
+ * @fileoverview Hook de Reconhecimento de Fala
+ * 
+ * Hook que encapsula a Web Speech API para transcrição de voz em tempo real,
+ * usado para entrada de voz no assistente de IA e formulários.
+ * 
+ * @module hooks/useSpeechRecognition
+ * 
+ * @example
+ * ```tsx
+ * function VoiceInput() {
+ *   const { 
+ *     isListening,
+ *     transcript,
+ *     startListening,
+ *     stopListening,
+ *     hasRecognitionSupport 
+ *   } = useSpeechRecognition();
+ *   
+ *   if (!hasRecognitionSupport) {
+ *     return <p>Seu navegador não suporta reconhecimento de voz</p>;
+ *   }
+ *   
+ *   return (
+ *     <div>
+ *       <button onClick={isListening ? stopListening : startListening}>
+ *         {isListening ? '⏹️ Parar' : '🎤 Gravar'}
+ *       </button>
+ *       <p>{transcript}</p>
+ *     </div>
+ *   );
+ * }
+ * ```
+ */
+
 import { useState, useEffect, useCallback } from 'react';
 
+/**
+ * Interface do retorno do hook useSpeechRecognition
+ * 
+ * @interface SpeechRecognitionHook
+ */
 interface SpeechRecognitionHook {
+  /** Se está ativamente ouvindo */
   isListening: boolean;
+  /** Texto transcrito da fala */
   transcript: string;
+  /** Inicia gravação de voz */
   startListening: () => void;
+  /** Para gravação de voz */
   stopListening: () => void;
+  /** Limpa o transcript atual */
   resetTranscript: () => void;
+  /** Se o navegador suporta a API */
   hasRecognitionSupport: boolean;
 }
 
+/**
+ * Interface interna da Web Speech API
+ * @internal
+ */
 interface SpeechRecognitionInstance {
   continuous: boolean;
   interimResults: boolean;
@@ -21,6 +71,10 @@ interface SpeechRecognitionInstance {
   stop: () => void;
 }
 
+/**
+ * Evento de resultado da API
+ * @internal
+ */
 interface SpeechRecognitionEvent {
   resultIndex: number;
   results: {
@@ -33,10 +87,51 @@ interface SpeechRecognitionEvent {
   };
 }
 
+/**
+ * Evento de erro da API
+ * @internal
+ */
 interface SpeechRecognitionErrorEvent {
   error: string;
 }
 
+/**
+ * Hook para reconhecimento de fala usando Web Speech API
+ * 
+ * Fornece interface simples para capturar e transcrever fala do usuário
+ * em tempo real. Configurado para português brasileiro (pt-BR).
+ * 
+ * @returns {SpeechRecognitionHook} Estado e controles do reconhecimento de fala
+ * 
+ * @example
+ * ```tsx
+ * function AudioNote() {
+ *   const speech = useSpeechRecognition();
+ *   const [savedNote, setSavedNote] = useState('');
+ *   
+ *   const handleSave = () => {
+ *     setSavedNote(speech.transcript);
+ *     speech.resetTranscript();
+ *   };
+ *   
+ *   return (
+ *     <div>
+ *       <MicButton 
+ *         active={speech.isListening}
+ *         onClick={speech.isListening ? speech.stopListening : speech.startListening}
+ *       />
+ *       <LivePreview text={speech.transcript} />
+ *       <button onClick={handleSave}>Salvar nota</button>
+ *     </div>
+ *   );
+ * }
+ * ```
+ * 
+ * @remarks
+ * - Usa WebKit prefix para suporte a Safari/Chrome
+ * - Modo contínuo com resultados intermediários
+ * - Logs de debug no console para troubleshooting
+ */
 export const useSpeechRecognition = (): SpeechRecognitionHook => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -44,8 +139,6 @@ export const useSpeechRecognition = (): SpeechRecognitionHook => {
 
   useEffect(() => {
     if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      console.log('[SpeechRecognition] API detected, initializing...');
-
       interface WindowWithSpeechRecognition extends Window {
         SpeechRecognition?: new () => SpeechRecognitionInstance;
         webkitSpeechRecognition?: new () => SpeechRecognitionInstance;
@@ -55,7 +148,6 @@ export const useSpeechRecognition = (): SpeechRecognitionHook => {
       const SpeechRecognition = win.SpeechRecognition || win.webkitSpeechRecognition;
 
       if (!SpeechRecognition) {
-        console.warn('[SpeechRecognition] Constructor not available');
         return;
       }
 
@@ -66,7 +158,6 @@ export const useSpeechRecognition = (): SpeechRecognitionHook => {
       recognitionInstance.lang = 'pt-BR';
 
       recognitionInstance.onstart = () => {
-        console.log('[SpeechRecognition] Started listening');
       };
 
       recognitionInstance.onresult = (event: SpeechRecognitionEvent) => {
@@ -74,24 +165,20 @@ export const useSpeechRecognition = (): SpeechRecognitionHook => {
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           currentTranscript += event.results[i][0].transcript;
         }
-        console.log('[SpeechRecognition] Transcript:', currentTranscript);
         setTranscript(currentTranscript);
       };
 
       recognitionInstance.onend = () => {
-        console.log('[SpeechRecognition] Ended');
         setIsListening(false);
       };
 
       recognitionInstance.onerror = (event: SpeechRecognitionErrorEvent) => {
-        console.error('[SpeechRecognition] Error:', event.error);
         setIsListening(false);
       };
 
       setRecognition(recognitionInstance);
-      console.log('[SpeechRecognition] Initialized successfully');
     } else {
-      console.warn('[SpeechRecognition] API not supported in this browser');
+      // API not supported
     }
   }, []);
 

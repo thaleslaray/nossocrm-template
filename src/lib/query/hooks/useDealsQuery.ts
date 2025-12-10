@@ -10,6 +10,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../index';
 import { dealsService, contactsService, companiesService, boardStagesService } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 import type { Deal, DealView, DealStatus, DealItem } from '@/types';
 
 // ============ QUERY HOOKS ============
@@ -24,8 +25,11 @@ export interface DealsFilters {
 
 /**
  * Hook to fetch all deals with optional filters
+ * Waits for auth to be ready before fetching to ensure RLS works correctly
  */
 export const useDeals = (filters?: DealsFilters) => {
+  const { user, loading: authLoading } = useAuth();
+
   return useQuery({
     queryKey: filters
       ? queryKeys.deals.list(filters as Record<string, unknown>)
@@ -45,7 +49,7 @@ export const useDeals = (filters?: DealsFilters) => {
           if (filters.maxValue && deal.value > filters.maxValue) return false;
           if (filters.search) {
             const search = filters.search.toLowerCase();
-            if (!deal.title.toLowerCase().includes(search)) return false;
+            if (!(deal.title || '').toLowerCase().includes(search)) return false;
           }
           return true;
         });
@@ -54,13 +58,17 @@ export const useDeals = (filters?: DealsFilters) => {
       return deals;
     },
     staleTime: 2 * 60 * 1000, // 2 minutes
+    enabled: !authLoading && !!user, // Only fetch when auth is ready
   });
 };
 
 /**
  * Hook to fetch all deals with enriched company/contact data (DealView)
+ * Waits for auth to be ready before fetching to ensure RLS works correctly
  */
 export const useDealsView = (filters?: DealsFilters) => {
+  const { user, loading: authLoading } = useAuth();
+
   return useQuery<DealView[]>({
     queryKey: filters
       ? [...queryKeys.deals.list(filters as Record<string, unknown>), 'view']
@@ -89,7 +97,7 @@ export const useDealsView = (filters?: DealsFilters) => {
       // Enrich deals with company/contact names and stageLabel
       let enrichedDeals: DealView[] = deals.map(deal => {
         const contact = contactMap.get(deal.contactId);
-        const company = companyMap.get(deal.companyId);
+        const company = companyMap.get(deal.clientCompanyId);
         return {
           ...deal,
           companyName: company?.name || 'Sem empresa',
@@ -109,8 +117,8 @@ export const useDealsView = (filters?: DealsFilters) => {
           if (filters.search) {
             const search = filters.search.toLowerCase();
             if (
-              !deal.title.toLowerCase().includes(search) &&
-              !deal.companyName.toLowerCase().includes(search)
+              !(deal.title || '').toLowerCase().includes(search) &&
+              !(deal.companyName || '').toLowerCase().includes(search)
             )
               return false;
           }
@@ -121,6 +129,7 @@ export const useDealsView = (filters?: DealsFilters) => {
       return enrichedDeals;
     },
     staleTime: 2 * 60 * 1000, // 2 minutes
+    enabled: !authLoading && !!user, // Only fetch when auth is ready
   });
 };
 
@@ -147,6 +156,8 @@ export const useDealsByBoard = (boardId: string) => {
   return useQuery<DealView[]>({
     queryKey: queryKeys.deals.list({ boardId }),
     queryFn: async () => {
+      // Guard: should never happen due to 'enabled', but safety first
+      if (!boardId) return [];
       // Fetch all data in parallel (including stages for stageLabel)
       const [dealsResult, contactsResult, companiesResult, stagesResult] = await Promise.all([
         dealsService.getAll(),
@@ -170,7 +181,7 @@ export const useDealsByBoard = (boardId: string) => {
       // Enrich deals with company/contact names and stageLabel
       const enrichedDeals: DealView[] = deals.map(deal => {
         const contact = contactMap.get(deal.contactId);
-        const company = companyMap.get(deal.companyId);
+        const company = companyMap.get(deal.clientCompanyId);
         return {
           ...deal,
           companyName: company?.name || 'Sem empresa',
@@ -183,6 +194,7 @@ export const useDealsByBoard = (boardId: string) => {
       return enrichedDeals;
     },
     staleTime: 1 * 60 * 1000, // 1 minute for kanban (more interactive)
+    enabled: !!boardId, // Only fetch when boardId is valid
   });
 };
 
@@ -203,17 +215,17 @@ export const useCreateDeal = () => {
 
   return useMutation({
     mutationFn: async (deal: CreateDealInput) => {
-      // company_id will be auto-set by trigger on server
+      // organization_id will be auto-set by trigger on server
       const fullDeal = {
         ...deal,
         isWon: deal.isWon ?? false,
         isLost: deal.isLost ?? false,
         updatedAt: new Date().toISOString(),
       };
-      
+
       // Passa null ao invés de '' - o trigger vai preencher automaticamente
-      const { data, error } = await dealsService.create(fullDeal, null as unknown as string);
-      
+      const { data, error } = await dealsService.create(fullDeal);
+
       if (error) throw error;
       return data!;
     },
@@ -293,6 +305,11 @@ export const useUpdateDeal = () => {
 /**
  * Hook to update deal status (for drag & drop in Kanban)
  * Optimized for instant UI feedback
+ * 
+ * When moving a deal:
+ * - If dropping into CUSTOMER stage: marks as won
+ * - If dropping into OTHER stage: marks as lost
+ * - If dropping into regular stage: reopens the deal if it was won/lost
  */
 export const useUpdateDealStatus = () => {
   const queryClient = useQueryClient();
@@ -302,27 +319,46 @@ export const useUpdateDealStatus = () => {
       id,
       status,
       lossReason,
+      isWon,
+      isLost,
     }: {
       id: string;
       status: string;
       lossReason?: string;
+      isWon?: boolean;
+      isLost?: boolean;
     }) => {
       const updates: Partial<Deal> = {
         status,
         lastStageChangeDate: new Date().toISOString(),
         ...(lossReason && { lossReason }),
       };
+
+      // Update won/lost status if provided
+      if (isWon !== undefined) {
+        updates.isWon = isWon;
+        if (isWon) updates.closedAt = new Date().toISOString();
+      }
+      if (isLost !== undefined) {
+        updates.isLost = isLost;
+        if (isLost) updates.closedAt = new Date().toISOString();
+      }
+      // Clear closedAt if reopening
+      if (isWon === false && isLost === false) {
+        updates.closedAt = null as unknown as string;
+      }
+
       const { error } = await dealsService.update(id, updates);
       if (error) throw error;
-      return { id, status, lossReason };
+      return { id, status, lossReason, isWon, isLost };
     },
-    onMutate: async ({ id, status, lossReason }) => {
+    onMutate: async ({ id, status, lossReason, isWon, isLost }) => {
       // Cancel all deals queries to prevent race conditions
       await queryClient.cancelQueries({ queryKey: queryKeys.deals.all });
 
       // Store previous state for ALL deal queries (including by-board queries)
-      const previousState = queryClient.getQueriesData<Deal[] | DealView[]>({ 
-        queryKey: queryKeys.deals.lists() 
+      const previousState = queryClient.getQueriesData<Deal[] | DealView[]>({
+        queryKey: queryKeys.deals.lists()
       });
 
       // Optimistic update for ALL deal list queries (including Kanban's useDealsByBoard)
@@ -332,11 +368,13 @@ export const useUpdateDealStatus = () => {
           old.map(deal =>
             deal.id === id
               ? {
-                  ...deal,
-                  status,
-                  lastStageChangeDate: new Date().toISOString(),
-                  ...(lossReason && { lossReason }),
-                }
+                ...deal,
+                status,
+                lastStageChangeDate: new Date().toISOString(),
+                ...(lossReason && { lossReason }),
+                ...(isWon !== undefined && { isWon }),
+                ...(isLost !== undefined && { isLost }),
+              }
               : deal
           )
       );

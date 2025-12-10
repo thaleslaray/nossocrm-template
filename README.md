@@ -170,7 +170,7 @@ Você vai criar **6 funções**. Cada uma leva menos de 1 minuto.
 
 <br>
 
-#### 🔁 Repita para cada uma das 6 funções:
+#### 🔁 Repita para cada uma das 7 funções:
 
 | # | Nome exato | O que ela faz |
 |:-:|------------|---------------|
@@ -180,12 +180,13 @@ Você vai criar **6 funções**. Cada uma leva menos de 1 minuto.
 | 4 | `delete-user` | Remove usuários |
 | 5 | `invite-users` | Envia convites por email |
 | 6 | `accept-invite` | Processa aceitação de convites |
+| 7 | `ai-proxy` | Proxy seguro para chamadas à API do Gemini |
 
 > ⚠️ **IMPORTANTE:** O nome de cada função deve ser **EXATAMENTE** como está na tabela (tudo minúsculo, com hífen).
 
 <br>
 
-✅ **Checkpoint:** No menu Edge Functions, você deve ver 6 funções listadas com status "Active".
+✅ **Checkpoint:** No menu Edge Functions, você deve ver 7 funções listadas com status "Active".
 
 <br>
 
@@ -940,6 +941,197 @@ serve(async (req) => {
 ```
 
 </details>
+
+<br>
+
+---
+
+<br>
+
+## 🛠️ Guia de Desenvolvimento
+
+Esta seção é para desenvolvedores que desejam contribuir ou customizar o NossoCRM.
+
+### Stack Tecnológica
+
+| Camada | Tecnologia |
+|--------|------------|
+| **Frontend** | React 19 + TypeScript + Vite |
+| **Styling** | Tailwind CSS (Dark Mode) |
+| **Estado Servidor** | TanStack Query |
+| **Estado Cliente** | Zustand |
+| **Backend** | Supabase (Auth, PostgreSQL, Edge Functions, Realtime) |
+| **IA** | Google Gemini / OpenAI / Anthropic |
+| **Testes** | Vitest + React Testing Library + Playwright |
+
+### Estrutura do Projeto
+
+```
+src/
+├── components/        # Componentes React reutilizáveis
+│   ├── ui/           # Componentes base (Button, Modal, Input)
+│   └── charts/       # Componentes de gráficos
+├── context/          # Providers React (Auth, CRM, Theme, Toast)
+│   ├── activities/   # Contexto de atividades
+│   ├── boards/       # Contexto de boards/pipelines
+│   ├── contacts/     # Contexto de contatos e empresas
+│   ├── deals/        # Contexto de deals
+│   └── settings/     # Contexto de configurações
+├── features/         # Páginas organizadas por domínio
+├── hooks/            # Custom hooks
+├── lib/              # Bibliotecas utilitárias
+│   ├── a11y/         # Acessibilidade (FocusTrap, LiveRegion)
+│   ├── query/        # TanStack Query hooks e config
+│   └── supabase/     # Serviços Supabase
+├── services/         # Serviços de integração (Gemini, etc)
+├── stores/           # Zustand stores
+├── types.ts          # Tipos TypeScript centralizados
+└── utils/            # Funções utilitárias
+```
+
+### Padrão de Arquitetura
+
+O projeto segue o padrão **Controller Hook**:
+
+```tsx
+// 1. Página (thin) - src/features/contacts/ContactsPage.tsx
+export const ContactsPage: React.FC = () => {
+  const controller = useContactsController();
+  return <ContactsView {...controller} />;
+};
+
+// 2. Controller Hook - src/features/contacts/hooks/useContactsController.ts
+export function useContactsController() {
+  const { data: contacts } = useContacts();
+  const createContact = useCreateContact();
+  // ... lógica de negócio
+  return { contacts, createContact, ... };
+}
+
+// 3. Query Hooks - src/lib/query/hooks/useContactsQuery.ts
+export function useContacts() {
+  return useQuery({
+    queryKey: queryKeys.contacts.all,
+    queryFn: () => contactsService.getAll(),
+  });
+}
+```
+
+### Desenvolvimento Local
+
+```bash
+# Instalar dependências
+npm install
+
+# Configurar variáveis de ambiente
+cp .env.example .env.local
+# Edite .env.local com suas credenciais Supabase
+
+# Iniciar servidor de desenvolvimento
+npm run dev   # Porta 3003
+
+# Executar testes
+npm test              # Watch mode
+npm run test:run      # Single run
+npm run test:ui       # Interface gráfica
+
+# Type checking
+npx tsc --noEmit
+
+# Build de produção
+npm run build
+```
+
+### Supabase CLI (Projeto Linkado)
+
+```bash
+# Reset total do banco remoto
+supabase db reset --linked
+
+# Aplicar migrations pendentes
+supabase db push
+
+# Deploy de Edge Function
+supabase functions deploy <nome>
+
+# Deploy sem verificação JWT (funções públicas)
+supabase functions deploy <nome> --no-verify-jwt
+```
+
+### ⚠️ Multi-Tenant: Conceitos Importantes
+
+O sistema tem **DOIS tipos de "empresa"**:
+
+| Conceito | Tabela | Uso |
+|----------|--------|-----|
+| **Organization** (Tenant) | `organizations` | Quem PAGA pelo SaaS - usado para RLS |
+| **CRMCompany** (Cliente) | `crm_companies` | Empresa cadastrada no CRM - relacionamento comercial |
+
+```typescript
+// ✅ CORRETO
+const deal = {
+  organization_id: organizationId,      // Do useAuth() - SEGURANÇA
+  client_company_id: selectedCompany,   // Do formulário - OPCIONAL
+};
+
+// ❌ ERRADO - Vai quebrar isolamento!
+const deal = {
+  organization_id: selectedCompany.id,  // Confundiu os dois conceitos!
+};
+```
+
+### Padrões de Código
+
+**Imports com alias:**
+```typescript
+import { useContacts } from '@/lib/query/hooks';
+import { useAuth } from '@/context/AuthContext';
+import { Contact } from '@/types';
+```
+
+**Validação de dados:**
+```typescript
+import { sanitizeUUID, requireUUID } from '@/lib/supabase/utils';
+
+// Campos opcionais: sanitizeUUID (retorna null se inválido)
+contact_id: sanitizeUUID(deal.contactId),
+
+// Campos obrigatórios: requireUUID (lança erro se inválido)
+board_id: requireUUID(deal.boardId, 'Board ID'),
+```
+
+**Modais acessíveis (obrigatório):**
+```tsx
+import { FocusTrap, useFocusReturn } from '@/lib/a11y';
+
+function Modal({ isOpen, onClose }) {
+  useFocusReturn({ enabled: isOpen });
+  
+  return (
+    <FocusTrap active={isOpen} onEscape={onClose}>
+      <div role="dialog" aria-modal="true" aria-labelledby="title">
+        <h2 id="title">Título</h2>
+      </div>
+    </FocusTrap>
+  );
+}
+```
+
+### Adicionando uma Nova Feature
+
+1. Criar estrutura em `src/features/<nome>/`
+2. Criar Query hooks em `lib/query/hooks/`
+3. Criar service Supabase em `lib/supabase/`
+4. Criar Controller hook usando os Query hooks
+5. Adicionar rota em `App.tsx`
+6. Adicionar item de navegação em `components/Layout.tsx`
+
+### Recursos Adicionais
+
+- **Arquitetura Multi-tenant:** `docs/MULTI_TENANT_ARCHITECTURE.md`
+- **Acessibilidade:** `docs/ACCESSIBILITY.md`
+- **LGPD:** `docs/LGPD_COMPLIANCE.md`
+- **Instruções para IA:** `.github/copilot-instructions.md`
 
 <br>
 

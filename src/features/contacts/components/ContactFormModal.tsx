@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { X } from 'lucide-react';
 import { Contact } from '@/types';
 import { DebugFillButton } from '@/components/debug/DebugFillButton';
 import { fakeContact } from '@/lib/debug';
+import { FocusTrap, useFocusReturn } from '@/lib/a11y';
 
 interface ContactFormData {
   name: string;
@@ -29,6 +30,9 @@ export const ContactFormModal: React.FC<ContactFormModalProps> = ({
   setFormData,
   editingContact,
 }) => {
+  const headingId = useId();
+  useFocusReturn({ enabled: isOpen });
+  
   if (!isOpen) return null;
 
   const fillWithFakeData = () => {
@@ -43,22 +47,29 @@ export const ContactFormModal: React.FC<ContactFormModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-      <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-in zoom-in-95 duration-200">
-        <div className="p-5 border-b border-slate-200 dark:border-white/10 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white font-display">
-              {editingContact ? 'Editar Contato' : 'Novo Contato'}
-            </h2>
-            <DebugFillButton onClick={fillWithFakeData} />
+    <FocusTrap active={isOpen} onEscape={onClose}>
+      <div 
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={headingId}
+      >
+        <div className="bg-white dark:bg-dark-card border border-slate-200 dark:border-white/10 rounded-2xl shadow-2xl w-full max-w-md animate-in zoom-in-95 duration-200">
+          <div className="p-5 border-b border-slate-200 dark:border-white/10 flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              <h2 id={headingId} className="text-lg font-bold text-slate-900 dark:text-white font-display">
+                {editingContact ? 'Editar Contato' : 'Novo Contato'}
+              </h2>
+              <DebugFillButton onClick={fillWithFakeData} />
+            </div>
+            <button
+              onClick={onClose}
+              aria-label="Fechar modal"
+              className="text-slate-400 hover:text-slate-600 dark:hover:text-white focus-visible-ring rounded"
+            >
+              <X size={20} aria-hidden="true" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-slate-600 dark:hover:text-white"
-          >
-            <X size={20} />
-          </button>
-        </div>
         <form onSubmit={onSubmit} className="p-5 space-y-4">
           <div>
             <label className="block text-xs font-bold text-slate-500 uppercase mb-1">
@@ -133,7 +144,8 @@ export const ContactFormModal: React.FC<ContactFormModalProps> = ({
             {editingContact ? 'Salvar Alterações' : 'Criar Contato'}
           </button>
         </form>
+        </div>
       </div>
-    </div>
+    </FocusTrap>
   );
 };

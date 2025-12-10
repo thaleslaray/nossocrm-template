@@ -9,6 +9,7 @@ import { ContactsStageTabs } from './components/ContactsStageTabs';
 import { ContactsList } from './components/ContactsList';
 import { ContactFormModal } from './components/ContactFormModal';
 import { SelectBoardModal } from './components/SelectBoardModal';
+import { PaginationControls } from './components/PaginationControls';
 import ConfirmModal from '@/components/ConfirmModal';
 
 export const ContactsPage: React.FC = () => {
@@ -50,7 +51,7 @@ export const ContactsPage: React.FC = () => {
             <ContactsTabs
                 viewMode={controller.viewMode}
                 setViewMode={controller.setViewMode}
-                contactsCount={controller.filteredContacts.length}
+                contactsCount={controller.totalCount}
                 companiesCount={controller.companies.length}
             />
 
@@ -93,8 +94,21 @@ export const ContactsPage: React.FC = () => {
                 convertContactToDeal={controller.convertContactToDeal}
                 openEditModal={controller.openEditModal}
                 setDeleteId={controller.setDeleteId}
-                addToast={controller.addToast}
+                sortBy={controller.sortBy}
+                sortOrder={controller.sortOrder}
+                onSort={controller.handleSort}
             />
+
+            {/* T021: Pagination Controls */}
+            {controller.viewMode === 'people' && controller.totalCount > 0 && (
+                <PaginationControls
+                    pagination={controller.pagination}
+                    setPagination={controller.setPagination}
+                    totalCount={controller.totalCount}
+                    isFetching={controller.isFetching}
+                    isPlaceholderData={controller.isPlaceholderData}
+                />
+            )}
 
             <ContactFormModal
                 isOpen={controller.isModalOpen}

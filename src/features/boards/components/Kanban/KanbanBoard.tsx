@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { DealView, DealStatus, BoardStage } from '@/types';
 import { DealCard } from './DealCard';
 import { isDealRotting, getActivityStatus } from '@/features/boards/hooks/useBoardsController';
-import { Settings } from 'lucide-react';
+import { MoveToStageModal } from '../Modals/MoveToStageModal';
 
 import { useCRM } from '@/context/CRMContext';
 
@@ -22,6 +22,8 @@ interface KanbanBoardProps {
     dealTitle: string
   ) => void;
   setLastMouseDownDealId: (id: string | null) => void;
+  /** Callback to move a deal to a new stage (for keyboard accessibility) */
+  onMoveDealToStage?: (dealId: string, newStageId: string) => void;
 }
 export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   stages,
@@ -35,9 +37,37 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   setOpenActivityMenuId,
   handleQuickAddActivity,
   setLastMouseDownDealId,
+  onMoveDealToStage,
 }) => {
   const { lifecycleStages } = useCRM();
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
+  
+  // State for move-to-stage modal (keyboard accessibility alternative to drag-and-drop)
+  const [moveToStageModal, setMoveToStageModal] = useState<{
+    isOpen: boolean;
+    deal: DealView;
+    currentStageId: string;
+  } | null>(null);
+
+  // Handler to open move-to-stage modal
+  const handleOpenMoveToStage = (dealId: string) => {
+    const deal = filteredDeals.find(d => d.id === dealId);
+    if (deal) {
+      setMoveToStageModal({
+        isOpen: true,
+        deal,
+        currentStageId: deal.status,
+      });
+    }
+  };
+
+  // Handler to confirm move to a new stage
+  const handleConfirmMoveToStage = (dealId: string, newStageId: string) => {
+    if (onMoveDealToStage) {
+      onMoveDealToStage(dealId, newStageId);
+    }
+    setMoveToStageModal(null);
+  };
 
   return (
     <div className="flex gap-4 h-full overflow-x-auto pb-2 w-full">
@@ -138,12 +168,25 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                   setOpenMenuId={setOpenActivityMenuId}
                   onQuickAddActivity={handleQuickAddActivity}
                   setLastMouseDownDealId={setLastMouseDownDealId}
+                  onMoveToStage={onMoveDealToStage ? handleOpenMoveToStage : undefined}
                 />
               ))}
             </div>
           </div>
         );
       })}
+      
+      {/* Keyboard-accessible modal for moving deals between stages */}
+      {moveToStageModal && (
+        <MoveToStageModal
+          isOpen={moveToStageModal.isOpen}
+          onClose={() => setMoveToStageModal(null)}
+          onMove={handleConfirmMoveToStage}
+          deal={moveToStageModal.deal}
+          stages={stages}
+          currentStageId={moveToStageModal.currentStageId}
+        />
+      )}
     </div>
   );
 };

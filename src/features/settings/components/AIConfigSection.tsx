@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useCRM } from '@/context/CRMContext';
-import { Bot, Key, Cpu, CheckCircle, AlertCircle, Loader2, Save, Trash2 } from 'lucide-react';
+import { Bot, Key, Cpu, CheckCircle, AlertCircle, Loader2, Save, Trash2, ChevronDown, ChevronUp, Shield } from 'lucide-react';
 import { useToast } from '@/context/ToastContext';
 
 // Função para validar API key fazendo uma chamada real à API
@@ -100,14 +100,17 @@ export const AIConfigSection: React.FC = () => {
         aiSearch, setAiSearch,
         aiAnthropicCaching, setAiAnthropicCaching
     } = useCRM();
-    
+
     const { showToast } = useToast();
 
     // Estado local para o input da key (não salva até validar)
     const [localApiKey, setLocalApiKey] = useState(aiApiKey);
     const [isValidating, setIsValidating] = useState(false);
-    const [validationStatus, setValidationStatus] = useState<'idle' | 'valid' | 'invalid'>('idle');
+    const [validationStatus, setValidationStatus] = useState<'idle' | 'valid' | 'invalid'>(
+        aiApiKey ? 'valid' : 'idle'
+    );
     const [validationError, setValidationError] = useState<string | null>(null);
+    const [lgpdExpanded, setLgpdExpanded] = useState(true); // Expandido por padrão
 
     // Sync local state when context changes (ex: carregamento inicial)
     useEffect(() => {
@@ -117,13 +120,14 @@ export const AIConfigSection: React.FC = () => {
         }
     }, [aiApiKey]);
 
-    // Reset validation quando muda a key local
-    useEffect(() => {
-        if (localApiKey !== aiApiKey) {
+    // Reset validation apenas quando usuário EDITA a key (não no carregamento)
+    const handleKeyChange = (newKey: string) => {
+        setLocalApiKey(newKey);
+        if (newKey !== aiApiKey) {
             setValidationStatus('idle');
             setValidationError(null);
         }
-    }, [localApiKey, aiApiKey]);
+    };
 
     const handleSaveApiKey = async () => {
         if (!localApiKey.trim()) {
@@ -183,9 +187,15 @@ export const AIConfigSection: React.FC = () => {
             id: 'openai',
             name: 'OpenAI',
             models: [
-                { id: 'gpt-4o', name: 'GPT-4o', description: 'Flagship model', price: '$5 / $15' },
-                { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', description: 'High intelligence', price: '$10 / $30' },
-                { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo', description: 'Fast & cheap', price: '$0.50 / $1.50' },
+                { id: 'gpt-5.1-codex-mini', name: 'GPT-5.1 Codex Mini', description: 'Fastest coder', price: '$0.50 / $1' },
+                { id: 'gpt-5.1-codex', name: 'GPT-5.1 Codex', description: 'Full coder model', price: '$2 / $6' },
+                { id: 'gpt-5.1-chat-latest', name: 'GPT-5.1 Chat Latest', description: 'Latest chat', price: '$3 / $9' },
+                { id: 'gpt-5.1', name: 'GPT-5.1', description: 'Standard', price: '$5 / $15' },
+                { id: 'gpt-5-pro', name: 'GPT-5 Pro', description: 'Recomendado - Premium', price: '$10 / $30' },
+                { id: 'gpt-5', name: 'GPT-5', description: 'Flagship model', price: '$8 / $24' },
+                { id: 'gpt-5-mini', name: 'GPT-5 Mini', description: 'Fast & efficient', price: '$2 / $6' },
+                { id: 'gpt-5-nano', name: 'GPT-5 Nano', description: 'Ultra fast', price: '$0.30 / $0.90' },
+                { id: 'gpt-4o', name: 'GPT-4o', description: 'Legacy flagship', price: '$5 / $15' },
             ]
         },
     ];
@@ -222,11 +232,12 @@ export const AIConfigSection: React.FC = () => {
                 {/* Provider Selection */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                        <label htmlFor="ai-provider-select" className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
                             <Cpu size={14} /> Provedor de IA
                         </label>
                         <div className="relative">
                             <select
+                                id="ai-provider-select"
                                 value={aiProvider}
                                 onChange={handleProviderChange}
                                 className="w-full appearance-none bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-white/10 rounded-lg px-4 py-2.5 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all"
@@ -243,11 +254,12 @@ export const AIConfigSection: React.FC = () => {
 
                     {/* Model Selection */}
                     <div className="space-y-2">
-                        <label className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
+                        <label htmlFor="ai-model-select" className="text-sm font-medium text-slate-700 dark:text-slate-300 flex items-center gap-2">
                             <Bot size={14} /> Modelo
                         </label>
                         <div className="relative">
                             <select
+                                id="ai-model-select"
                                 value={providers.some(p => p.models.some(m => m.id === aiModel)) ? aiModel : 'custom'}
                                 onChange={(e) => {
                                     if (e.target.value === 'custom') {
@@ -292,9 +304,9 @@ export const AIConfigSection: React.FC = () => {
                     <div className="bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-500/20 rounded-lg p-4 animate-in fade-in slide-in-from-top-2">
                         <div className="flex items-center justify-between">
                             <div>
-                                <h4 className="font-medium text-blue-900 dark:text-blue-100 flex items-center gap-2">
+                                <h3 className="font-medium text-blue-900 dark:text-blue-100 flex items-center gap-2">
                                     <span className="text-lg">🧠</span> Modo Pensamento (Thinking)
-                                </h4>
+                                </h3>
                                 <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
                                     Permite que o modelo "pense" antes de responder, melhorando o raciocínio.
                                 </p>
@@ -305,6 +317,7 @@ export const AIConfigSection: React.FC = () => {
                                     checked={aiThinking}
                                     onChange={(e) => setAiThinking(e.target.checked)}
                                     className="sr-only peer"
+                                    aria-label="Ativar Modo Pensamento"
                                 />
                                 <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
                             </label>
@@ -317,9 +330,9 @@ export const AIConfigSection: React.FC = () => {
                     <div className="bg-orange-50 dark:bg-orange-900/10 border border-orange-100 dark:border-orange-500/20 rounded-lg p-4 animate-in fade-in slide-in-from-top-2">
                         <div className="flex items-center justify-between">
                             <div>
-                                <h4 className="font-medium text-orange-900 dark:text-orange-100 flex items-center gap-2">
+                                <h3 className="font-medium text-orange-900 dark:text-orange-100 flex items-center gap-2">
                                     <span className="text-lg">⚡</span> Prompt Caching
-                                </h4>
+                                </h3>
                                 <p className="text-sm text-orange-700 dark:text-orange-300 mt-1">
                                     Cacheia o contexto para economizar tokens e acelerar respostas (ideal para conversas longas).
                                 </p>
@@ -330,6 +343,7 @@ export const AIConfigSection: React.FC = () => {
                                     checked={aiAnthropicCaching}
                                     onChange={(e) => setAiAnthropicCaching(e.target.checked)}
                                     className="sr-only peer"
+                                    aria-label="Ativar Prompt Caching"
                                 />
                                 <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-orange-300 dark:peer-focus:ring-orange-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-orange-600"></div>
                             </label>
@@ -342,9 +356,9 @@ export const AIConfigSection: React.FC = () => {
                     <div className="bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-500/20 rounded-lg p-4 animate-in fade-in slide-in-from-top-2">
                         <div className="flex items-center justify-between">
                             <div>
-                                <h4 className="font-medium text-green-900 dark:text-green-100 flex items-center gap-2">
+                                <h3 className="font-medium text-green-900 dark:text-green-100 flex items-center gap-2">
                                     <span className="text-lg">🌍</span> {aiProvider === 'google' ? 'Google Search Grounding' : 'Web Search'}
-                                </h4>
+                                </h3>
                                 <p className="text-sm text-green-700 dark:text-green-300 mt-1">
                                     Conecta o modelo à internet para buscar informações atualizadas.
                                 </p>
@@ -355,6 +369,7 @@ export const AIConfigSection: React.FC = () => {
                                     checked={aiSearch}
                                     onChange={(e) => setAiSearch(e.target.checked)}
                                     className="sr-only peer"
+                                    aria-label="Ativar busca na web"
                                 />
                                 <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-green-300 dark:peer-focus:ring-green-800 rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-green-600"></div>
                             </label>
@@ -372,15 +387,14 @@ export const AIConfigSection: React.FC = () => {
                             <input
                                 type="password"
                                 value={localApiKey}
-                                onChange={(e) => setLocalApiKey(e.target.value)}
+                                onChange={(e) => handleKeyChange(e.target.value)}
                                 placeholder={`Cole sua chave ${aiProvider === 'google' ? 'AIza...' : 'sk-...'}`}
-                                className={`w-full bg-slate-50 dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all font-mono ${
-                                    validationStatus === 'invalid' 
-                                        ? 'border-red-300 dark:border-red-500/50' 
+                                className={`w-full bg-slate-50 dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm text-slate-900 dark:text-white focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all font-mono ${validationStatus === 'invalid'
+                                        ? 'border-red-300 dark:border-red-500/50'
                                         : validationStatus === 'valid'
-                                        ? 'border-green-300 dark:border-green-500/50'
-                                        : 'border-slate-200 dark:border-white/10'
-                                }`}
+                                            ? 'border-green-300 dark:border-green-500/50'
+                                            : 'border-slate-200 dark:border-white/10'
+                                    }`}
                             />
                             <div className="absolute right-3 top-1/2 -translate-y-1/2">
                                 {isValidating ? (
@@ -397,11 +411,10 @@ export const AIConfigSection: React.FC = () => {
                         <button
                             onClick={handleSaveApiKey}
                             disabled={isValidating || !localApiKey.trim() || (!hasUnsavedChanges && validationStatus === 'valid')}
-                            className={`px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-all ${
-                                isValidating || !localApiKey.trim() || (!hasUnsavedChanges && validationStatus === 'valid')
+                            className={`px-4 py-2.5 rounded-lg text-sm font-medium flex items-center gap-2 transition-all ${isValidating || !localApiKey.trim() || (!hasUnsavedChanges && validationStatus === 'valid')
                                     ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
                                     : 'bg-purple-600 hover:bg-purple-700 text-white shadow-lg shadow-purple-600/20'
-                            }`}
+                                }`}
                         >
                             {isValidating ? (
                                 <>
@@ -432,37 +445,89 @@ export const AIConfigSection: React.FC = () => {
                         </p>
                     )}
                     <p className="text-xs text-slate-500 dark:text-slate-400">
-                        Sua chave é validada antes de salvar e armazenada de forma segura no banco de dados.
+                        🔒 Sua chave é validada antes de salvar e armazenada <strong>criptografada</strong> no banco de dados.
+                        Ela nunca é exposta no navegador - todas as chamadas de IA passam por um servidor seguro.
                     </p>
+
+                    {/* Seção LGPD Colapsável - Expandida por padrão */}
+                    <div className="mt-4 border border-amber-200 dark:border-amber-500/30 rounded-lg overflow-hidden">
+                        <button
+                            type="button"
+                            onClick={() => setLgpdExpanded(!lgpdExpanded)}
+                            className="w-full flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-900/20 hover:bg-amber-100 dark:hover:bg-amber-900/30 transition-colors"
+                        >
+                            <div className="flex items-center gap-2">
+                                <Shield size={16} className="text-amber-600 dark:text-amber-400" />
+                                <span className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+                                    ⚖️ Consentimento LGPD - Importante!
+                                </span>
+                            </div>
+                            {lgpdExpanded ? (
+                                <ChevronUp size={18} className="text-amber-600 dark:text-amber-400" />
+                            ) : (
+                                <ChevronDown size={18} className="text-amber-600 dark:text-amber-400" />
+                            )}
+                        </button>
+
+                        {lgpdExpanded && (
+                            <div className="p-4 bg-amber-50/50 dark:bg-amber-900/10 space-y-3 animate-in slide-in-from-top-2 duration-200">
+                                <div className="space-y-2 text-sm text-amber-900 dark:text-amber-100">
+                                    <p className="font-medium">
+                                        Ao salvar sua chave de API, você autoriza:
+                                    </p>
+                                    <ul className="list-disc list-inside space-y-1 text-amber-800 dark:text-amber-200 ml-2">
+                                        <li>O processamento dos seus <strong>negócios</strong> (deals) pela IA</li>
+                                        <li>O processamento dos seus <strong>contatos</strong> pela IA</li>
+                                        <li>O processamento das suas <strong>atividades</strong> pela IA</li>
+                                        <li>Opcionalmente, <strong>entrada por voz</strong> (dado sensível conforme Art. 11)</li>
+                                    </ul>
+                                </div>
+
+                                <div className="pt-2 border-t border-amber-200 dark:border-amber-500/20">
+                                    <p className="text-xs text-amber-700 dark:text-amber-300 leading-relaxed">
+                                        <strong>Base legal:</strong> Consentimento do titular (Art. 7º, I e Art. 11, I da LGPD).
+                                        Seus dados são enviados diretamente ao provedor de IA que você escolheu ({providers.find(p => p.id === aiProvider)?.name}).
+                                        Nós não armazenamos ou intermediamos essas comunicações.
+                                    </p>
+                                </div>
+
+                                <div className="pt-2 border-t border-amber-200 dark:border-amber-500/20">
+                                    <p className="text-xs text-amber-700 dark:text-amber-300">
+                                        <strong>Como revogar:</strong> Remova sua chave de API a qualquer momento clicando no botão 🗑️ ao lado do campo.
+                                        O consentimento será automaticamente revogado.
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 </div>
 
-                {/* Status Banner */}
-                <div className={`rounded-lg p-4 flex items-start gap-3 ${
-                    validationStatus === 'valid' && aiApiKey
-                        ? 'bg-green-50 dark:bg-green-900/10 text-green-800 dark:text-green-200' 
+                {/* Status Banner - use localApiKey para refletir estado atual após salvar */}
+                <div className={`rounded-lg p-4 flex items-start gap-3 ${validationStatus === 'valid' && localApiKey
+                        ? 'bg-green-50 dark:bg-green-900/10 text-green-800 dark:text-green-200'
                         : validationStatus === 'invalid'
-                        ? 'bg-red-50 dark:bg-red-900/10 text-red-800 dark:text-red-200'
-                        : 'bg-amber-50 dark:bg-amber-900/10 text-amber-800 dark:text-amber-200'
-                }`}>
-                    {validationStatus === 'valid' && aiApiKey ? (
+                            ? 'bg-red-50 dark:bg-red-900/10 text-red-800 dark:text-red-200'
+                            : 'bg-amber-50 dark:bg-amber-900/10 text-amber-800 dark:text-amber-200'
+                    }`}>
+                    {validationStatus === 'valid' && localApiKey ? (
                         <CheckCircle className="shrink-0 mt-0.5" size={18} />
                     ) : (
                         <AlertCircle className="shrink-0 mt-0.5" size={18} />
                     )}
                     <div className="text-sm">
                         <p className="font-semibold">
-                            {validationStatus === 'valid' && aiApiKey
+                            {validationStatus === 'valid' && localApiKey
                                 ? 'Pronto para uso'
                                 : validationStatus === 'invalid'
-                                ? 'Chave Inválida'
-                                : 'Configuração Pendente'}
+                                    ? 'Chave Inválida'
+                                    : 'Configuração Pendente'}
                         </p>
                         <p className="opacity-90 mt-1">
-                            {validationStatus === 'valid' && aiApiKey
+                            {validationStatus === 'valid' && localApiKey
                                 ? `O sistema está configurado para usar o ${providers.find(p => p.id === aiProvider)?.name} (${aiModel}).`
                                 : validationStatus === 'invalid'
-                                ? 'Verifique sua chave de API e tente novamente.'
-                                : 'Insira uma chave de API válida e clique em Salvar para usar o assistente.'}
+                                    ? 'Verifique sua chave de API e tente novamente.'
+                                    : 'Insira uma chave de API válida e clique em Salvar para usar o assistente.'}
                         </p>
                     </div>
                 </div>

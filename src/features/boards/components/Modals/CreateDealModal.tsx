@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useCRM } from '@/context/CRMContext';
+import { useAuth } from '@/context/AuthContext';
 import { Deal, Board } from '@/types';
 import { X } from 'lucide-react';
 import { DebugFillButton } from '@/components/debug/DebugFillButton';
@@ -14,18 +15,19 @@ interface CreateDealModalProps {
     activeBoardId?: string;
 }
 
-export const CreateDealModal: React.FC<CreateDealModalProps> = ({ 
-    isOpen, 
-    onClose, 
-    activeBoard: propActiveBoard, 
-    activeBoardId: propActiveBoardId 
+export const CreateDealModal: React.FC<CreateDealModalProps> = ({
+    isOpen,
+    onClose,
+    activeBoard: propActiveBoard,
+    activeBoardId: propActiveBoardId
 }) => {
     const { addDeal, activeBoard: contextActiveBoard, activeBoardId: contextActiveBoardId } = useCRM();
-    
+    const { profile, user } = useAuth();
+
     // Prioriza props sobre contexto (permite que o Kanban passe o board correto)
     const activeBoard = propActiveBoard || contextActiveBoard;
     const activeBoardId = propActiveBoardId || contextActiveBoardId;
-    
+
     const [newDealData, setNewDealData] = useState({
         title: '',
         companyName: '',
@@ -50,7 +52,7 @@ export const CreateDealModal: React.FC<CreateDealModalProps> = ({
     };
 
     if (!isOpen) return null;
-    
+
     // Guard: não permite criar deal sem board ativo
     if (!activeBoard || !activeBoard.stages?.length) {
         return (
@@ -59,8 +61,8 @@ export const CreateDealModal: React.FC<CreateDealModalProps> = ({
                     <p className="text-slate-700 dark:text-slate-300 text-center">
                         Nenhum board selecionado ou board sem estágios.
                     </p>
-                    <button 
-                        onClick={onClose} 
+                    <button
+                        onClick={onClose}
                         className="w-full mt-4 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-900 dark:text-white font-bold py-2.5 rounded-lg transition-all"
                     >
                         Fechar
@@ -72,9 +74,14 @@ export const CreateDealModal: React.FC<CreateDealModalProps> = ({
 
     const handleCreateDeal = (e: React.FormEvent) => {
         e.preventDefault();
-        
+
         // Usa o primeiro estágio do board ativo
         const firstStage = activeBoard.stages[0];
+
+        const ownerName = profile?.nickname ||
+            profile?.first_name ||
+            (profile?.email || user?.email || '').split('@')[0] ||
+            'Eu';
 
         const deal: Deal = {
             id: crypto.randomUUID(),
@@ -82,6 +89,7 @@ export const CreateDealModal: React.FC<CreateDealModalProps> = ({
             companyId: '', // Será criado pelo CRMContext
             contactId: '', // Será criado pelo CRMContext
             boardId: activeBoardId || '',
+            ownerId: user?.id || '',
             value: Number(newDealData.value) || 0,
             items: [],
             status: firstStage.id,
@@ -90,7 +98,10 @@ export const CreateDealModal: React.FC<CreateDealModalProps> = ({
             probability: 10,
             priority: 'medium',
             tags: ['Novo'],
-            owner: { name: 'Eu', avatar: 'https://i.pravatar.cc/150?u=me' },
+            owner: {
+                name: ownerName,
+                avatar: profile?.avatar_url || ''
+            },
             customFields: {},
             isWon: false,
             isLost: false,

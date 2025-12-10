@@ -37,7 +37,7 @@ interface SettingsContextType {
   lifecycleStages: LifecycleStage[];
   addLifecycleStage: (stage: Omit<LifecycleStage, 'id' | 'order'>) => Promise<LifecycleStage | null>;
   updateLifecycleStage: (id: string, updates: Partial<LifecycleStage>) => Promise<void>;
-  deleteLifecycleStage: (id: string) => Promise<void>;
+  deleteLifecycleStage: (id: string, contacts: any[]) => Promise<void>;
   reorderLifecycleStages: (newOrder: LifecycleStage[]) => Promise<void>;
 
   // Products (TODO: migrate to Supabase)
@@ -57,8 +57,11 @@ interface SettingsContextType {
   // AI Config
   aiProvider: AIConfig['provider'];
   setAiProvider: (provider: AIConfig['provider']) => Promise<void>;
-  aiApiKey: string;
+  aiApiKey: string; // Current key (based on provider)
   setAiApiKey: (key: string) => Promise<void>;
+  aiGoogleKey: string;
+  aiOpenaiKey: string;
+  aiAnthropicKey: string;
   aiModel: string;
   setAiModel: (model: string) => Promise<void>;
   aiThinking: boolean;
@@ -97,13 +100,25 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [leads, setLeads] = useState<Lead[]>([]);
 
-  // AI Config state
+  // AI Config state - separate keys per provider
   const [aiProvider, setAiProviderState] = useState<AIConfig['provider']>('google');
-  const [aiApiKey, setAiApiKeyState] = useState<string>('');
+  const [aiGoogleKey, setAiGoogleKeyState] = useState<string>('');
+  const [aiOpenaiKey, setAiOpenaiKeyState] = useState<string>('');
+  const [aiAnthropicKey, setAiAnthropicKeyState] = useState<string>('');
   const [aiModel, setAiModelState] = useState<string>('gemini-2.5-flash');
   const [aiThinking, setAiThinkingState] = useState<boolean>(true);
   const [aiSearch, setAiSearchState] = useState<boolean>(true);
   const [aiAnthropicCaching, setAiAnthropicCachingState] = useState<boolean>(false);
+
+  // Computed: current API key based on provider
+  const aiApiKey = useMemo(() => {
+    switch (aiProvider) {
+      case 'google': return aiGoogleKey;
+      case 'openai': return aiOpenaiKey;
+      case 'anthropic': return aiAnthropicKey;
+      default: return '';
+    }
+  }, [aiProvider, aiGoogleKey, aiOpenaiKey, aiAnthropicKey]);
 
   // UI State
   const [isGlobalAIOpen, setIsGlobalAIOpen] = useState(false);
@@ -123,7 +138,9 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
       const { data: settings } = await settingsService.get();
       if (settings) {
         setAiProviderState(settings.aiProvider);
-        setAiApiKeyState(settings.aiApiKey);
+        setAiGoogleKeyState(settings.aiGoogleKey);
+        setAiOpenaiKeyState(settings.aiOpenaiKey);
+        setAiAnthropicKeyState(settings.aiAnthropicKey);
         setAiModelState(settings.aiModel);
         setAiThinkingState(settings.aiThinking);
         setAiSearchState(settings.aiSearch);
@@ -186,9 +203,16 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
     []
   );
 
-  const deleteLifecycleStage = useCallback(async (id: string) => {
+  const deleteLifecycleStage = useCallback(async (id: string, contacts: any[] = []) => {
     const stageToDelete = lifecycleStages.find(s => s.id === id);
     if (stageToDelete?.isDefault) return;
+
+    // Validate if there are linked contacts
+    const hasLinkedContacts = contacts.some(c => c.stage === id);
+    if (hasLinkedContacts) {
+      setError('Não é possível excluir estágio com contatos vinculados');
+      return;
+    }
 
     const { error: deleteError } = await lifecycleStagesService.delete(id);
 
@@ -229,10 +253,23 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const setAiApiKey = useCallback(
     async (key: string) => {
-      setAiApiKeyState(key);
-      await updateSettings({ aiApiKey: key });
+      // Update the correct provider's key
+      switch (aiProvider) {
+        case 'google':
+          setAiGoogleKeyState(key);
+          await updateSettings({ aiGoogleKey: key });
+          break;
+        case 'openai':
+          setAiOpenaiKeyState(key);
+          await updateSettings({ aiOpenaiKey: key });
+          break;
+        case 'anthropic':
+          setAiAnthropicKeyState(key);
+          await updateSettings({ aiAnthropicKey: key });
+          break;
+      }
     },
-    [updateSettings]
+    [updateSettings, aiProvider]
   );
 
   const setAiModel = useCallback(
@@ -326,6 +363,9 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
       setAiProvider,
       aiApiKey,
       setAiApiKey,
+      aiGoogleKey,
+      aiOpenaiKey,
+      aiAnthropicKey,
       aiModel,
       setAiModel,
       aiThinking,
@@ -363,6 +403,9 @@ export const SettingsProvider: React.FC<{ children: ReactNode }> = ({ children }
       setAiProvider,
       aiApiKey,
       setAiApiKey,
+      aiGoogleKey,
+      aiOpenaiKey,
+      aiAnthropicKey,
       aiModel,
       setAiModel,
       aiThinking,

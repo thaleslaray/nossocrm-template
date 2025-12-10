@@ -7,13 +7,15 @@ interface InboxItemProps {
   onToggleComplete: (id: string) => void;
   onSnooze?: (id: string) => void;
   onDiscard?: (id: string) => void;
+  onSelect?: (id: string) => void;
 }
 
-export const InboxItem: React.FC<InboxItemProps> = ({ 
-  activity, 
+export const InboxItem: React.FC<InboxItemProps> = ({
+  activity,
   onToggleComplete,
   onSnooze,
-  onDiscard 
+  onDiscard,
+  onSelect
 }) => {
   const [showMenu, setShowMenu] = useState(false);
   const isMeeting = activity.type === 'MEETING' || activity.type === 'CALL';
@@ -40,23 +42,28 @@ export const InboxItem: React.FC<InboxItemProps> = ({
         ) : (
           <button
             onClick={() => onToggleComplete(activity.id)}
-            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${
-              activity.completed 
-                ? 'bg-green-500 border-green-500 text-white' 
-                : 'border-slate-300 dark:border-slate-600 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-500/10 text-transparent hover:text-green-500'
-            }`}
+            aria-label={activity.completed ? 'Marcar como pendente' : 'Marcar como concluído'}
+            className={`w-5 h-5 rounded-full border-2 flex items-center justify-center transition-all ${activity.completed
+              ? 'bg-green-500 border-green-500 text-white'
+              : 'border-slate-300 dark:border-slate-600 hover:border-green-500 hover:bg-green-50 dark:hover:bg-green-500/10 text-transparent hover:text-green-500'
+              }`}
           >
-            <CheckCircle2 size={12} />
+            <CheckCircle2 size={12} aria-hidden="true" />
           </button>
         )}
       </div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <h3 className={`font-medium text-slate-900 dark:text-white ${activity.completed ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
-          {activity.title}
-        </h3>
-        
+        <button
+          onClick={() => onSelect?.(activity.id)}
+          className="text-left group/title"
+        >
+          <h3 className={`font-medium text-slate-900 dark:text-white group-hover/title:text-primary-500 transition-colors ${activity.completed ? 'line-through text-slate-400 dark:text-slate-500' : ''}`}>
+            {activity.title}
+          </h3>
+        </button>
+
         {activity.description && (
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5 line-clamp-1">
             {activity.description}
@@ -70,22 +77,35 @@ export const InboxItem: React.FC<InboxItemProps> = ({
             <span className="truncate">{activity.dealTitle}</span>
           </div>
         )}
+
+        {/* Helper text if no deal but onSelect exists (e.g. Contact task) */}
+        {!activity.dealTitle && onSelect && (
+          <button
+            onClick={() => onSelect(activity.id)}
+            className="flex items-center gap-1 mt-2 text-xs font-medium text-primary-600 dark:text-primary-400 hover:underline"
+          >
+            Ver detalhes
+          </button>
+        )}
       </div>
 
       {/* Actions Menu */}
       <div className="relative shrink-0">
         <button
           onClick={() => setShowMenu(!showMenu)}
+          aria-label="Menu de opções"
+          aria-expanded={showMenu}
+          aria-haspopup="true"
           className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-white/5 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
         >
-          <MoreHorizontal size={18} />
+          <MoreHorizontal size={18} aria-hidden="true" />
         </button>
 
         {showMenu && (
           <>
-            <div 
-              className="fixed inset-0 z-10" 
-              onClick={() => setShowMenu(false)} 
+            <div
+              className="fixed inset-0 z-10"
+              onClick={() => setShowMenu(false)}
             />
             <div className="absolute right-0 top-full mt-1 z-20 bg-white dark:bg-dark-card border border-slate-200 dark:border-white/10 rounded-lg shadow-lg py-1 min-w-[140px]">
               {isMeeting && (

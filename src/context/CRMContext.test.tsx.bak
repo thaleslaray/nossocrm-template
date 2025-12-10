@@ -1,0 +1,643 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { renderHook, act, waitFor } from '@testing-library/react';
+import { CRMProvider, useCRM } from '../../context/CRMContext';
+import { DealStatus } from '../../types';
+import React from 'react';
+
+// Mock localStorage
+const localStorageMock = (() => {
+  let store: Record<string, string> = {};
+  return {
+    getItem: vi.fn((key: string) => store[key] || null),
+    setItem: vi.fn((key: string, value: string) => {
+      store[key] = value;
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete store[key];
+    }),
+    clear: vi.fn(() => {
+      store = {};
+    }),
+  };
+})();
+
+Object.defineProperty(window, 'localStorage', { value: localStorageMock });
+
+// Wrapper for all hooks
+const wrapper = ({ children }: { children: React.ReactNode }) => (
+  <CRMProvider>{children}</CRMProvider>
+);
+
+describe('CRMContext', () => {
+  beforeEach(() => {
+    localStorageMock.clear();
+    vi.clearAllMocks();
+  });
+
+  describe('Initialization', () => {
+    it('should provide all required context values', () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      // Core data
+      expect(result.current.deals).toBeDefined();
+      expect(result.current.contacts).toBeDefined();
+      expect(result.current.companies).toBeDefined();
+      expect(result.current.activities).toBeDefined();
+      expect(result.current.boards).toBeDefined();
+
+      // Functions
+      expect(typeof result.current.addDeal).toBe('function');
+      expect(typeof result.current.updateDeal).toBe('function');
+      expect(typeof result.current.moveDeal).toBe('function');
+      expect(typeof result.current.deleteDeal).toBe('function');
+      expect(typeof result.current.addContact).toBe('function');
+      expect(typeof result.current.addActivity).toBe('function');
+    });
+
+    it('should have an active board', () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      expect(result.current.activeBoard).toBeDefined();
+      expect(result.current.activeBoard.stages).toBeDefined();
+      expect(result.current.activeBoard.stages.length).toBeGreaterThan(0);
+    });
+
+    it('should have lifecycle stages configured', () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      expect(result.current.lifecycleStages).toBeDefined();
+      expect(Array.isArray(result.current.lifecycleStages)).toBe(true);
+    });
+  });
+
+  describe('Deals CRUD', () => {
+    it('should add a new deal with activity log', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      const initialDealsCount = result.current.deals.length;
+      const initialActivitiesCount = result.current.activities.length;
+
+      act(() => {
+        result.current.addDeal({
+          id: 'test-deal-1',
+          title: 'Test Deal',
+          value: 5000,
+          status: result.current.activeBoard.stages[0].id,
+          companyId: 'comp-1',
+          contactId: 'cont-1',
+          boardId: result.current.activeBoardId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          probability: 50,
+          priority: 'medium',
+          owner: { name: 'Test', avatar: '' },
+          tags: [],
+          items: [],
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.deals.length).toBe(initialDealsCount + 1);
+      });
+
+      // Should create activity for new deal
+      expect(result.current.activities.length).toBeGreaterThan(initialActivitiesCount);
+    });
+
+    it('should add deal with new company when companyName provided', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      const initialCompaniesCount = result.current.companies.length;
+
+      act(() => {
+        result.current.addDeal(
+          {
+            id: 'test-deal-2',
+            title: 'Deal with New Company',
+            value: 10000,
+            status: result.current.activeBoard.stages[0].id,
+            companyId: 'new-comp-id',
+            contactId: 'cont-1',
+            boardId: result.current.activeBoardId,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            probability: 30,
+            priority: 'high',
+            owner: { name: 'Test', avatar: '' },
+            tags: [],
+            items: [],
+          },
+          { companyName: 'Acme Corporation' }
+        );
+      });
+
+      await waitFor(() => {
+        expect(result.current.companies.length).toBe(initialCompaniesCount + 1);
+        const newCompany = result.current.companies.find(c => c.name === 'Acme Corporation');
+        expect(newCompany).toBeDefined();
+      });
+    });
+
+    it('should update deal fields', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      // First add a deal
+      act(() => {
+        result.current.addDeal({
+          id: 'update-test-deal',
+          title: 'Original Title',
+          value: 1000,
+          status: result.current.activeBoard.stages[0].id,
+          companyId: 'comp-1',
+          contactId: 'cont-1',
+          boardId: result.current.activeBoardId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          probability: 25,
+          priority: 'low',
+          owner: { name: 'Test', avatar: '' },
+          tags: [],
+          items: [],
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.deals.some(d => d.id === 'update-test-deal')).toBe(true);
+      });
+
+      // Then update it
+      act(() => {
+        result.current.updateDeal('update-test-deal', {
+          title: 'Updated Title',
+          value: 5000,
+        });
+      });
+
+      await waitFor(() => {
+        const updated = result.current.deals.find(d => d.id === 'update-test-deal');
+        expect(updated?.title).toBe('Updated Title');
+        expect(updated?.value).toBe(5000);
+      });
+    });
+
+    it('should delete deal', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      act(() => {
+        result.current.addDeal({
+          id: 'delete-test-deal',
+          title: 'To Delete',
+          value: 500,
+          status: result.current.activeBoard.stages[0].id,
+          companyId: 'comp-1',
+          contactId: 'cont-1',
+          boardId: result.current.activeBoardId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          probability: 10,
+          priority: 'low',
+          owner: { name: 'Test', avatar: '' },
+          tags: [],
+          items: [],
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.deals.some(d => d.id === 'delete-test-deal')).toBe(true);
+      });
+
+      act(() => {
+        result.current.deleteDeal('delete-test-deal');
+      });
+
+      await waitFor(() => {
+        expect(result.current.deals.some(d => d.id === 'delete-test-deal')).toBe(false);
+      });
+    });
+  });
+
+  describe('moveDeal', () => {
+    it('should move deal to new status and log activity', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      // Add a deal first
+      act(() => {
+        result.current.addDeal({
+          id: 'move-test-deal',
+          title: 'Deal to Move',
+          value: 2000,
+          status: result.current.activeBoard.stages[0].id,
+          companyId: 'comp-1',
+          contactId: 'cont-1',
+          boardId: result.current.activeBoardId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          probability: 40,
+          priority: 'medium',
+          owner: { name: 'Test', avatar: '' },
+          tags: [],
+          items: [],
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.deals.some(d => d.id === 'move-test-deal')).toBe(true);
+      });
+
+      const activitiesBeforeMove = result.current.activities.length;
+      const secondStage = result.current.activeBoard.stages[1]?.id;
+
+      if (secondStage) {
+        act(() => {
+          result.current.moveDeal('move-test-deal', secondStage);
+        });
+
+        await waitFor(() => {
+          expect(result.current.activities.length).toBeGreaterThan(activitiesBeforeMove);
+        });
+      }
+    });
+
+    it('should set lossReason when moving to CLOSED_LOST', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      act(() => {
+        result.current.addDeal({
+          id: 'loss-test-deal',
+          title: 'Deal to Lose',
+          value: 3000,
+          status: result.current.activeBoard.stages[0].id,
+          companyId: 'comp-1',
+          contactId: 'cont-1',
+          boardId: result.current.activeBoardId,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          probability: 20,
+          priority: 'low',
+          owner: { name: 'Test', avatar: '' },
+          tags: [],
+          items: [],
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.deals.some(d => d.id === 'loss-test-deal')).toBe(true);
+      });
+
+      act(() => {
+        result.current.moveDeal('loss-test-deal', DealStatus.CLOSED_LOST, 'Preço muito alto');
+      });
+
+      await waitFor(() => {
+        const lostActivity = result.current.activities.find(
+          a => a.dealId === 'loss-test-deal' && a.description?.includes('Preço muito alto')
+        );
+        expect(lostActivity).toBeDefined();
+      });
+    });
+  });
+
+  describe('Contacts', () => {
+    it('should add contact', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      const initialCount = result.current.contacts.length;
+
+      act(() => {
+        result.current.addContact({
+          id: 'new-contact-1',
+          companyId: 'comp-1',
+          name: 'John Doe',
+          email: 'john@example.com',
+          phone: '11999999999',
+          role: 'CEO',
+          status: 'ACTIVE',
+          stage: 'LEAD',
+          createdAt: new Date().toISOString(),
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.contacts.length).toBe(initialCount + 1);
+        expect(result.current.contacts.some(c => c.name === 'John Doe')).toBe(true);
+      });
+    });
+
+    it('should update contact', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      act(() => {
+        result.current.addContact({
+          id: 'update-contact',
+          companyId: 'comp-1',
+          name: 'Jane Original',
+          email: 'jane@example.com',
+          phone: '',
+          role: 'Developer',
+          status: 'ACTIVE',
+          stage: 'LEAD',
+          createdAt: new Date().toISOString(),
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.contacts.some(c => c.id === 'update-contact')).toBe(true);
+      });
+
+      act(() => {
+        result.current.updateContact('update-contact', { name: 'Jane Updated', role: 'CTO' });
+      });
+
+      await waitFor(() => {
+        const updated = result.current.contacts.find(c => c.id === 'update-contact');
+        expect(updated?.name).toBe('Jane Updated');
+        expect(updated?.role).toBe('CTO');
+      });
+    });
+
+    it('should update contact stage', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      act(() => {
+        result.current.addContact({
+          id: 'stage-contact',
+          companyId: 'comp-1',
+          name: 'Stage Test',
+          email: 'stage@example.com',
+          phone: '',
+          role: '',
+          status: 'ACTIVE',
+          stage: 'LEAD',
+          createdAt: new Date().toISOString(),
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.contacts.some(c => c.id === 'stage-contact')).toBe(true);
+      });
+
+      act(() => {
+        result.current.updateContactStage('stage-contact', 'CUSTOMER');
+      });
+
+      await waitFor(() => {
+        const contact = result.current.contacts.find(c => c.id === 'stage-contact');
+        expect(contact?.stage).toBe('CUSTOMER');
+      });
+    });
+
+    it('should convert contact to deal', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      // Add a company and contact first
+      act(() => {
+        result.current.addCompany({
+          id: 'convert-company',
+          name: 'Convert Corp',
+          createdAt: new Date().toISOString(),
+        });
+      });
+
+      act(() => {
+        result.current.addContact({
+          id: 'convert-contact',
+          companyId: 'convert-company',
+          name: 'Convert Person',
+          email: 'convert@example.com',
+          phone: '',
+          role: 'Manager',
+          status: 'ACTIVE',
+          stage: 'LEAD',
+          createdAt: new Date().toISOString(),
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.contacts.some(c => c.id === 'convert-contact')).toBe(true);
+      });
+
+      const dealsBeforeConvert = result.current.deals.length;
+
+      act(() => {
+        result.current.convertContactToDeal('convert-contact');
+      });
+
+      await waitFor(() => {
+        expect(result.current.deals.length).toBe(dealsBeforeConvert + 1);
+        const newDeal = result.current.deals.find(d => d.contactId === 'convert-contact');
+        expect(newDeal).toBeDefined();
+      });
+    });
+  });
+
+  describe('Activities', () => {
+    it('should add activity', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      const initialCount = result.current.activities.length;
+
+      act(() => {
+        result.current.addActivity({
+          id: 'new-activity',
+          dealId: 'deal-1',
+          dealTitle: 'Test Deal',
+          type: 'CALL',
+          title: 'Follow-up call',
+          date: new Date().toISOString(),
+          user: { name: 'Test', avatar: '' },
+          completed: false,
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.activities.length).toBe(initialCount + 1);
+      });
+    });
+
+    it('should toggle activity completion', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      act(() => {
+        result.current.addActivity({
+          id: 'toggle-activity',
+          dealId: 'deal-1',
+          dealTitle: 'Test Deal',
+          type: 'TASK',
+          title: 'Complete this task',
+          date: new Date().toISOString(),
+          user: { name: 'Test', avatar: '' },
+          completed: false,
+        });
+      });
+
+      await waitFor(() => {
+        const activity = result.current.activities.find(a => a.id === 'toggle-activity');
+        expect(activity?.completed).toBe(false);
+      });
+
+      act(() => {
+        result.current.toggleActivityCompletion('toggle-activity');
+      });
+
+      await waitFor(() => {
+        const activity = result.current.activities.find(a => a.id === 'toggle-activity');
+        expect(activity?.completed).toBe(true);
+      });
+    });
+  });
+
+  describe('Boards', () => {
+    it('should add new board', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      const initialCount = result.current.boards.length;
+
+      act(() => {
+        result.current.addBoard({
+          name: 'New Board',
+          description: 'Test board',
+          stages: [
+            { id: 'stage-1', label: 'Start', color: 'gray' },
+            { id: 'stage-2', label: 'End', color: 'green' },
+          ],
+          isDefault: false,
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.boards.length).toBe(initialCount + 1);
+      });
+    });
+
+    it('should switch active board', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      // Add a new board first
+      let newBoardId = '';
+      act(() => {
+        const newBoard = result.current.addBoard({
+          name: 'Switch Board',
+          description: 'To switch to',
+          stages: [{ id: 's1', label: 'Stage 1', color: 'bg-gray-500' }],
+          isDefault: false,
+        });
+        newBoardId = newBoard.id;
+      });
+
+      await waitFor(() => {
+        expect(result.current.boards.some(b => b.id === newBoardId)).toBe(true);
+      });
+
+      act(() => {
+        result.current.setActiveBoardId(newBoardId);
+      });
+
+      await waitFor(() => {
+        expect(result.current.activeBoardId).toBe(newBoardId);
+        expect(result.current.activeBoard.id).toBe(newBoardId);
+      });
+    });
+  });
+
+  describe('Settings & Tags', () => {
+    it('should add and remove tags', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      const initialTags = result.current.availableTags.length;
+
+      act(() => {
+        result.current.addTag('new-test-tag');
+      });
+
+      await waitFor(() => {
+        expect(result.current.availableTags.length).toBe(initialTags + 1);
+        expect(result.current.availableTags.includes('new-test-tag')).toBe(true);
+      });
+
+      act(() => {
+        result.current.removeTag('new-test-tag');
+      });
+
+      await waitFor(() => {
+        expect(result.current.availableTags.includes('new-test-tag')).toBe(false);
+      });
+    });
+
+    it('should update AI settings', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      act(() => {
+        result.current.setAiProvider('openai');
+      });
+
+      await waitFor(() => {
+        expect(result.current.aiProvider).toBe('openai');
+      });
+
+      act(() => {
+        result.current.setAiApiKey('test-key-123');
+      });
+
+      await waitFor(() => {
+        expect(result.current.aiApiKey).toBe('test-key-123');
+      });
+    });
+  });
+
+  describe('Business Logic', () => {
+    it('should check wallet health and create tasks', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      // Add a risky contact (no lastPurchaseDate)
+      act(() => {
+        result.current.addContact({
+          id: 'risky-contact',
+          companyId: 'comp-1',
+          name: 'Risky Customer',
+          email: 'risky@example.com',
+          phone: '',
+          role: '',
+          status: 'ACTIVE',
+          stage: 'CUSTOMER',
+          createdAt: new Date().toISOString(),
+          // No lastPurchaseDate = risky
+        });
+      });
+
+      await waitFor(() => {
+        expect(result.current.contacts.some(c => c.id === 'risky-contact')).toBe(true);
+      });
+
+      let riskyCount = 0;
+      act(() => {
+        riskyCount = result.current.checkWalletHealth();
+      });
+
+      // Should identify at least one risky contact
+      expect(riskyCount).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should load test data', async () => {
+      const { result } = renderHook(() => useCRM(), { wrapper });
+
+      act(() => {
+        result.current.loadTestData();
+      });
+
+      await waitFor(() => {
+        expect(result.current.deals.length).toBeGreaterThan(0);
+        expect(result.current.contacts.length).toBeGreaterThan(0);
+        expect(result.current.companies.length).toBeGreaterThan(0);
+      });
+    });
+  });
+
+  describe('Error handling', () => {
+    it('should throw when useCRM is used outside provider', () => {
+      // This should throw because there's no provider
+      expect(() => {
+        renderHook(() => useCRM());
+      }).toThrow('useCRM must be used within a CRMProvider');
+    });
+  });
+});

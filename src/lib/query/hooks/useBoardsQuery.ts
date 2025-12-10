@@ -20,7 +20,7 @@ import type { Board, BoardStage } from '@/types';
  */
 export const useBoards = () => {
   const { user, loading: authLoading } = useAuth();
-  
+
   return useQuery({
     queryKey: queryKeys.boards.lists(),
     queryFn: async () => {
@@ -50,8 +50,11 @@ export const useBoard = (id: string | undefined) => {
 
 /**
  * Hook to get the default board
+ * Waits for auth to be ready before fetching to ensure RLS works correctly
  */
 export const useDefaultBoard = () => {
+  const { user, loading: authLoading } = useAuth();
+
   return useQuery({
     queryKey: [...queryKeys.boards.all, 'default'] as const,
     queryFn: async () => {
@@ -59,6 +62,7 @@ export const useDefaultBoard = () => {
       if (error) throw error;
       return (data || []).find(b => b.isDefault) || (data || [])[0] || null;
     },
+    enabled: !authLoading && !!user, // Only fetch when auth is ready
   });
 };
 
@@ -69,21 +73,13 @@ export const useDefaultBoard = () => {
  */
 export const useCreateBoard = () => {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
 
   return useMutation({
-    mutationFn: async ({ board, order, companyId }: { 
-      board: Omit<Board, 'id' | 'createdAt'>; 
+    mutationFn: async ({ board, order }: {
+      board: Omit<Board, 'id' | 'createdAt'>;
       order?: number;
-      companyId?: string;
     }) => {
-      // Usa o companyId passado explicitamente ou pega do profile
-      const effectiveCompanyId = companyId || profile?.company_id;
-      
-      if (!effectiveCompanyId) {
-        throw new Error('Usuário não autenticado ou sem empresa associada');
-      }
-      const { data, error } = await boardsService.create(board, effectiveCompanyId, order);
+      const { data, error } = await boardsService.create(board, order);
       if (error) throw error;
       return data!;
     },
@@ -98,11 +94,11 @@ export const useCreateBoard = () => {
  */
 export const useUpdateBoard = () => {
   const queryClient = useQueryClient();
-  const { profile } = useAuth();
+  const { profile, organizationId } = useAuth();
 
   return useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<Board> }) => {
-      const { error } = await boardsService.update(id, updates, profile?.company_id);
+      const { error } = await boardsService.update(id, updates, organizationId || profile?.organization_id);
       if (error) throw error;
       return { id, updates };
     },
