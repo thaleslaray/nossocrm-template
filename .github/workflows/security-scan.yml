@@ -37,7 +37,7 @@ jobs:
 
       # Upload do relatório como artefato
       - name: Upload ZAP Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: zap-report
@@ -64,7 +64,7 @@ jobs:
           cmd_options: '-T 60'
 
       - name: Upload Full Scan Report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         if: always()
         with:
           name: zap-full-report
