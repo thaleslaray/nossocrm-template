@@ -17,7 +17,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # ZAP Baseline Scan - varredura passiva (não ataca, só observa)
       # Ideal para CI/CD pois é rápida e não invasiva
@@ -52,7 +52,7 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Run OWASP ZAP Full Scan
         uses: zaproxy/action-full-scan@v0.10.0
